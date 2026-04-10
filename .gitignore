@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.vercel
+.wrangler/
+.claude/
+memory/
+.env
+.env*.local

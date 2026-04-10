@@ -1,0 +1,7 @@
+name = "vrfsm"
+pages_build_output_dir = "dist"
+
+[[kv_namespaces]]
+binding = "FSM_KV"
+id = "203ea61dc8d541d1a7042e63be9614c4"
+preview_id = "ddab699290e44d2192cd512866447892"
