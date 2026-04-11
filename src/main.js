@@ -401,8 +401,6 @@ function updateLocomotion(dt) {
     if (source.handedness === 'left') {
       // 左スティック: 前後左右移動
       renderer.xr.getCamera().getWorldDirection(_moveDir);
-      _moveDir.y = 0;
-      _moveDir.normalize();
       _rightDir.crossVectors(_moveDir, _upVec).normalize();
       playerRig.position.addScaledVector(_moveDir, -stickY * LOCO_SPEED * dt);
       playerRig.position.addScaledVector(_rightDir, stickX * LOCO_SPEED * dt);
