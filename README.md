@@ -28,3 +28,6 @@ npm run pages:deploy # Cloudflare Pages にデプロイ
 - **実行モード**: 下部のトリガーボタンで遷移発火
 - **VR**: VRButtonでQuest接続、コントローラーでraycasting操作
 - **URLシェア**: `?id=<uuid>` でFSMを共有可能
+
+### AI協力: Claude (Anthropic)
+
