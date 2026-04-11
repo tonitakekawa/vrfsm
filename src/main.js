@@ -39,6 +39,11 @@ orbit.dampingFactor = 0.06;
 orbit.target.set(4, 0, 0);
 orbit.update();
 
+// Player rig — VR移動のためにカメラとコントローラーをまとめるグループ
+const playerRig = new THREE.Group();
+scene.add(playerRig);
+playerRig.add(camera);
+
 // VR Controllers
 const ctrlFactory = new XRControllerModelFactory();
 
@@ -50,11 +55,11 @@ function makeController(i) {
   ]);
   const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x88aaff }));
   ctrl.add(line);
-  scene.add(ctrl);
+  playerRig.add(ctrl);
 
   const grip = renderer.xr.getControllerGrip(i);
   grip.add(ctrlFactory.createControllerModel(grip));
-  scene.add(grip);
+  playerRig.add(grip);
   return ctrl;
 }
 
@@ -370,6 +375,47 @@ fsm.on('currentStateChanged', () => {
 });
 
 // ============================================================
+// VR Locomotion — 左スティックで移動
+// ============================================================
+
+const _moveDir = new THREE.Vector3();
+const _rightDir = new THREE.Vector3();
+const _upVec = new THREE.Vector3(0, 1, 0);
+const LOCO_SPEED = 3;    // m/s
+const TURN_SPEED = 1.5;  // rad/s
+const LOCO_DEADZONE = 0.15;
+
+function updateLocomotion(dt) {
+  if (!renderer.xr.isPresenting) return;
+  const session = renderer.xr.getSession();
+  if (!session) return;
+
+  for (const source of session.inputSources) {
+    if (!source.gamepad) continue;
+    const axes = source.gamepad.axes;
+    // Quest: axes[2]=thumbstick X, axes[3]=thumbstick Y
+    const stickX = axes[2] ?? 0;
+    const stickY = axes[3] ?? 0;
+    if (Math.abs(stickX) < LOCO_DEADZONE && Math.abs(stickY) < LOCO_DEADZONE) continue;
+
+    if (source.handedness === 'left') {
+      // 左スティック: 前後左右移動
+      renderer.xr.getCamera().getWorldDirection(_moveDir);
+      _moveDir.y = 0;
+      _moveDir.normalize();
+      _rightDir.crossVectors(_moveDir, _upVec).normalize();
+      playerRig.position.addScaledVector(_moveDir, -stickY * LOCO_SPEED * dt);
+      playerRig.position.addScaledVector(_rightDir, stickX * LOCO_SPEED * dt);
+    } else if (source.handedness === 'right') {
+      // 右スティック左右: 水平回転 (yaw) — 世界Y軸周り
+      playerRig.rotateY(-stickX * TURN_SPEED * dt);
+      // 右スティック上下: 垂直回転 (pitch) — rig のローカルX軸周り
+      playerRig.rotateX(-stickY * TURN_SPEED * dt);
+    }
+  }
+}
+
+// ============================================================
 // Render loop
 // ============================================================
 
@@ -380,6 +426,7 @@ renderer.setAnimationLoop((time, frame) => {
   _lastTime = time;
 
   input.update(frame);
+  updateLocomotion(dt);
 
   if (!renderer.xr.isPresenting) {
     orbit.update();
