@@ -26,8 +26,17 @@ npm run pages:deploy # Cloudflare Pages にデプロイ
 
 - **編集モード**: 空白クリック=ノード追加、右クリック=コンテキストメニュー、ドラッグ=ノード移動
 - **実行モード**: 下部のトリガーボタンで遷移発火
-- **VR**: VRButtonでQuest接続、コントローラーでraycasting操作
+- **VR / Quest**:
+  - Trigger = 選択
+  - Grip = ノード移動
+  - A = ノード追加
+  - B = キャンセル / 選択解除
+  - X = 選択ノードからエッジ開始
+  - Y = 選択ノードを初期状態に設定
+  - Runモードでは緑のエッジをTriggerで実行
+  - 左スティック = 移動、右スティック左右 = 旋回
 - **URLシェア**: `?id=<uuid>` でFSMを共有可能
 
-### AI協力: Claude (Anthropic)
-
+###　AI協業:
+- Claude (Anthropic)
+- GPT(OpenAI)

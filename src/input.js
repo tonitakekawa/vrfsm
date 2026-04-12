@@ -18,6 +18,8 @@ export class InputManager {
     this._dragTarget = null;
 
     this._xrControllers = [];
+    this._xrDragState = null;
+    this._xrButtonStates = new Map();
 
     this._bindMouse();
     this._bindTouch();
@@ -47,9 +49,15 @@ export class InputManager {
     });
     ctrl.addEventListener('squeezestart', () => {
       const hit = this._raycastFromController(ctrl);
+      const target = hit?.object?.userData?.stateId || null;
+      this._xrDragState = target ? { controller: ctrl, target } : null;
       this.emit('gripStart', { hit, source: 'xr' });
     });
     ctrl.addEventListener('squeezeend', () => {
+      if (this._xrDragState?.controller === ctrl) {
+        this._xrDragState = null;
+        this.emit('dragEnd', { source: 'xr' });
+      }
       this.emit('gripEnd', { source: 'xr' });
     });
   }
@@ -60,6 +68,18 @@ export class InputManager {
       for (const ctrl of this._xrControllers) {
         const hit = this._raycastFromController(ctrl);
         this.emit('hover', { hit, source: 'xr' });
+        if (this._xrDragState?.controller === ctrl) {
+          const ground = this._raycastGroundFromController(ctrl);
+          this.emit('drag', { hit: ground, target: this._xrDragState.target, source: 'xr' });
+        }
+      }
+
+      const session = this.renderer.xr.getSession();
+      if (session) {
+        for (const source of session.inputSources) {
+          if (!source.gamepad) continue;
+          this._updateXRButtons(source);
+        }
       }
     }
   }
@@ -204,5 +224,27 @@ export class InputManager {
     this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(mat);
     const hits = this.raycaster.intersectObjects(this._interactable, false);
     return hits.length ? hits[0] : null;
+  }
+
+  _raycastGroundFromController(ctrl) {
+    const mat = new THREE.Matrix4().extractRotation(ctrl.matrixWorld);
+    this.raycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
+    this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(mat);
+    const ok = this.raycaster.ray.intersectPlane(this._groundPlane, this._groundTarget);
+    return ok ? { point: this._groundTarget.clone() } : null;
+  }
+
+  _updateXRButtons(source) {
+    const handedness = source.handedness || 'unknown';
+    const prev = this._xrButtonStates.get(handedness) || [];
+    const next = source.gamepad.buttons.map(btn => btn.pressed);
+
+    next.forEach((pressed, index) => {
+      if (pressed && !prev[index]) {
+        this.emit('xrButtonDown', { handedness, index, source: 'xr' });
+      }
+    });
+
+    this._xrButtonStates.set(handedness, next);
   }
 }

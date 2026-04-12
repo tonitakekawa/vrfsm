@@ -7,6 +7,7 @@ import { FSM, loadDefaultFSM } from './fsm.js';
 import { World } from './world.js';
 import { InputManager } from './input.js';
 import { UIManager } from './ui.js';
+import { createLabel, updateLabel } from './label.js';
 
 // ============================================================
 // Three.js setup
@@ -87,6 +88,29 @@ input.addXRController(ctrl1);
 
 let mode = 'edit';          // 'edit' | 'run'
 let edgeFromId = null;      // stateId when drawing an edge
+let _autoNodeCount = 1;
+
+const vrHud = new THREE.Group();
+camera.add(vrHud);
+vrHud.position.set(0, -0.48, -1.35);
+
+const vrModeLabel = createLabel('', {
+  fontSize: 26,
+  scaleX: 1.55,
+  scaleY: 0.22,
+  bg: 'rgba(10,16,30,0.88)',
+});
+vrModeLabel.position.set(0, 0.12, 0);
+vrHud.add(vrModeLabel);
+
+const vrHintLabel = createLabel('', {
+  fontSize: 24,
+  scaleX: 1.85,
+  scaleY: 0.24,
+  bg: 'rgba(6,10,22,0.82)',
+});
+vrHintLabel.position.set(0, -0.08, 0);
+vrHud.add(vrHintLabel);
 
 // ============================================================
 // Load initial data — Cloudflare KV via /api/fsm
@@ -175,6 +199,8 @@ function setMode(m) {
     fsm.reset();
     ui.hideTriggerButtons();
   }
+
+  refreshVrHud();
 }
 
 // ============================================================
@@ -185,6 +211,7 @@ function cancelEdge() {
   edgeFromId = null;
   ui.hideEdgeHint();
   world.clearSelection();
+  refreshVrHud();
 }
 
 async function createNode(pos) {
@@ -192,6 +219,14 @@ async function createNode(pos) {
   if (!name) return;
   const id = fsm.addState(name, { x: pos.x, y: 0, z: pos.z });
   world.selectNode(id);
+  refreshVrHud();
+}
+
+function createNodeQuick(pos) {
+  const id = fsm.addState(nextAutoNodeName(), { x: pos.x, y: 0, z: pos.z });
+  world.selectNode(id);
+  ui.showToast('ノードを追加しました');
+  refreshVrHud();
 }
 
 async function startEdge(fromId) {
@@ -199,12 +234,24 @@ async function startEdge(fromId) {
   const s = fsm.states.get(fromId);
   ui.showEdgeHint(s?.name || '?');
   world.selectNode(fromId);
+  refreshVrHud();
 }
 
 async function completeEdge(toId) {
   const trigger = await ui.showTextInput('トリガー名を入力');
   if (!trigger) { cancelEdge(); return; }
   fsm.addTransition(edgeFromId, toId, trigger);
+  cancelEdge();
+}
+
+function completeEdgeQuick(toId) {
+  if (!edgeFromId) return;
+  const fromId = edgeFromId;
+  const from = fsm.states.get(fromId);
+  const to = fsm.states.get(toId);
+  const trigger = `${from?.name || 'State'}→${to?.name || 'State'}`;
+  fsm.addTransition(fromId, toId, trigger);
+  ui.showToast('エッジを追加しました');
   cancelEdge();
 }
 
@@ -220,6 +267,74 @@ async function renameTrigger(tid) {
   if (!t) return;
   const trigger = await ui.showTextInput('新しいトリガー名', t.trigger);
   if (trigger) fsm.renameTrigger(tid, trigger);
+}
+
+function nextAutoNodeName() {
+  let name = `State ${_autoNodeCount}`;
+  const existing = new Set([...fsm.states.values()].map(s => s.name));
+  while (existing.has(name)) {
+    _autoNodeCount += 1;
+    name = `State ${_autoNodeCount}`;
+  }
+  _autoNodeCount += 1;
+  return name;
+}
+
+function updateAutoNodeCounter() {
+  let max = 0;
+  for (const state of fsm.states.values()) {
+    const m = /^State (\d+)$/.exec(state.name);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  _autoNodeCount = max + 1;
+}
+
+function getGroundPointFromAnyController() {
+  for (const ctrl of input._xrControllers) {
+    const ground = input._raycastGroundFromController(ctrl);
+    if (ground?.point) return ground;
+  }
+  return null;
+}
+
+function fireTransitionById(id) {
+  const transition = fsm.transitions.get(id);
+  if (!transition) return false;
+  const ok = fsm.fire(transition.trigger);
+  if (ok) {
+    const state = fsm.states.get(fsm.currentStateId);
+    ui.showToast(`→ ${state?.name || '?'}`);
+    ui.showTriggerButtons(fsm.getAvailableTransitions());
+  } else {
+    ui.showToast('遷移できません');
+  }
+  refreshVrHud();
+  return ok;
+}
+
+function refreshVrHud() {
+  const presenting = renderer.xr.isPresenting;
+  vrHud.visible = presenting;
+  if (!presenting) return;
+
+  const selId = world.getSelectedId();
+  const selected = selId ? fsm.states.get(selId) : null;
+  const modeText = mode === 'edit' ? 'EDIT  Trigger: select  Grip: move' : 'RUN  Point green edge and pull trigger';
+
+  let hintText = '';
+  if (mode === 'edit' && edgeFromId) {
+    const from = fsm.states.get(edgeFromId);
+    hintText = `X edge from ${from?.name || '?'} / Trigger target / B cancel`;
+  } else if (mode === 'edit' && selected) {
+    hintText = `Selected ${selected.name} / A add / X edge / Y initial / B clear`;
+  } else if (mode === 'edit') {
+    hintText = 'Aim floor + A add node / Trigger select / Grip drag node';
+  } else {
+    hintText = 'Use toolbar on Mac or edge trigger in VR to step';
+  }
+
+  updateLabel(vrModeLabel, modeText);
+  updateLabel(vrHintLabel, hintText);
 }
 
 // ============================================================
@@ -244,11 +359,19 @@ input.on('select', ({ hit }) => {
     const stateId = world.getNodeIdFromObject(hit?.object);
     if (stateId) {
       if (edgeFromId) {
-        completeEdge(stateId);
+        if (renderer.xr.isPresenting) {
+          completeEdgeQuick(stateId);
+        } else {
+          completeEdge(stateId);
+        }
       } else {
         world.selectNode(stateId);
+        refreshVrHud();
       }
     }
+  } else if (mode === 'run') {
+    const transId = world.getTransitionIdFromObject(hit?.object);
+    if (transId) fireTransitionById(transId);
   }
 });
 
@@ -259,6 +382,7 @@ input.on('miss', ({ hit }) => {
       return;
     }
     world.clearSelection();
+    refreshVrHud();
     if (hit?.point) createNode(hit.point);
   }
 });
@@ -276,6 +400,7 @@ input.on('drag', ({ hit, target }) => {
 input.on('dragEnd', () => {
   _dragStateId = null;
   orbit.enabled = true;
+  refreshVrHud();
 });
 
 // Context menu
@@ -334,6 +459,37 @@ input.on('keydown', ({ key }) => {
   }
 });
 
+input.on('xrButtonDown', ({ handedness, index }) => {
+  if (mode !== 'edit') return;
+
+  const selectedId = world.getSelectedId();
+
+  if (handedness === 'right' && index === 4) {
+    const ground = getGroundPointFromAnyController();
+    if (ground?.point) createNodeQuick(ground.point);
+    return;
+  }
+
+  if (handedness === 'right' && index === 5) {
+    cancelEdge();
+    ui.showToast('選択を解除しました');
+    return;
+  }
+
+  if (handedness === 'left' && index === 4) {
+    if (selectedId) startEdge(selectedId);
+    return;
+  }
+
+  if (handedness === 'left' && index === 5) {
+    if (selectedId) {
+      fsm.setInitialState(selectedId);
+      ui.showToast('初期状態に設定しました');
+      refreshVrHud();
+    }
+  }
+});
+
 // ============================================================
 // UI events
 // ============================================================
@@ -341,14 +497,8 @@ input.on('keydown', ({ key }) => {
 ui.on('modeChange', m => setMode(m));
 
 ui.on('fireTrigger', ({ trigger }) => {
-  const ok = fsm.fire(trigger);
-  if (ok) {
-    const state = fsm.states.get(fsm.currentStateId);
-    ui.showToast(`→ ${state?.name || '?'}`);
-    ui.showTriggerButtons(fsm.getAvailableTransitions());
-  } else {
-    ui.showToast('遷移できません');
-  }
+  const transition = fsm.getAvailableTransitions().find(t => t.trigger === trigger);
+  if (transition) fireTransitionById(transition.id);
 });
 
 ui.on('reset', () => {
@@ -372,6 +522,7 @@ fsm.on('currentStateChanged', () => {
   if (mode === 'run') {
     ui.showTriggerButtons(fsm.getAvailableTransitions());
   }
+  refreshVrHud();
 });
 
 // ============================================================
@@ -401,14 +552,14 @@ function updateLocomotion(dt) {
     if (source.handedness === 'left') {
       // 左スティック: 前後左右移動
       renderer.xr.getCamera().getWorldDirection(_moveDir);
+      _moveDir.y = 0;
+      _moveDir.normalize();
       _rightDir.crossVectors(_moveDir, _upVec).normalize();
       playerRig.position.addScaledVector(_moveDir, -stickY * LOCO_SPEED * dt);
       playerRig.position.addScaledVector(_rightDir, stickX * LOCO_SPEED * dt);
     } else if (source.handedness === 'right') {
-      // 右スティック左右: 水平回転 (yaw) — 世界Y軸周り
+      // 右スティック左右: 水平回転 (yaw)
       playerRig.rotateY(-stickX * TURN_SPEED * dt);
-      // 右スティック上下: 垂直回転 (pitch) — rig のローカルX軸周り
-      playerRig.rotateX(-stickY * TURN_SPEED * dt);
     }
   }
 }
@@ -431,6 +582,7 @@ renderer.setAnimationLoop((time, frame) => {
   }
 
   world.update(dt);
+  refreshVrHud();
   renderer.render(scene, camera);
 });
 
@@ -438,4 +590,7 @@ renderer.setAnimationLoop((time, frame) => {
 // Init
 // ============================================================
 
-loadData();
+loadData().then(() => {
+  updateAutoNodeCounter();
+  refreshVrHud();
+});
