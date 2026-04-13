@@ -50,7 +50,11 @@ export class InputManager {
     ctrl.addEventListener('squeezestart', () => {
       const hit = this._raycastFromController(ctrl);
       const target = hit?.object?.userData?.stateId || null;
-      this._xrDragState = target ? { controller: ctrl, target } : null;
+      this._xrDragState = target ? {
+        controller: ctrl,
+        target,
+        startControllerPos: new THREE.Vector3().setFromMatrixPosition(ctrl.matrixWorld),
+      } : null;
       this.emit('gripStart', { hit, source: 'xr' });
     });
     ctrl.addEventListener('squeezeend', () => {
@@ -70,7 +74,14 @@ export class InputManager {
         this.emit('hover', { hit, source: 'xr' });
         if (this._xrDragState?.controller === ctrl) {
           const ground = this._raycastGroundFromController(ctrl);
-          this.emit('drag', { hit: ground, target: this._xrDragState.target, source: 'xr' });
+          const controllerPos = new THREE.Vector3().setFromMatrixPosition(ctrl.matrixWorld);
+          const controllerDelta = controllerPos.clone().sub(this._xrDragState.startControllerPos);
+          this.emit('drag', {
+            hit: ground,
+            target: this._xrDragState.target,
+            source: 'xr',
+            controllerDelta,
+          });
         }
       }
 
@@ -99,7 +110,14 @@ export class InputManager {
         }
         if (this._dragging) {
           const hit = this._raycastGround();
-          this.emit('drag', { hit, target: this._dragTarget, source: 'mouse' });
+          this.emit('drag', {
+            hit,
+            target: this._dragTarget,
+            source: 'mouse',
+            shiftKey: e.shiftKey,
+            deltaX: dx,
+            deltaY: dy,
+          });
         }
       } else {
         const hit = this._raycast();

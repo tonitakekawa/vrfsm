@@ -7,6 +7,7 @@ export class UIManager {
 
     this.btnEdit    = document.getElementById('btn-edit');
     this.btnRun     = document.getElementById('btn-run');
+    this.btnAddState = document.getElementById('btn-add-state');
     this.btnReset   = document.getElementById('btn-reset');
     this.btnClear   = document.getElementById('btn-clear');
     this.btnExport  = document.getElementById('btn-export');
@@ -54,6 +55,13 @@ export class UIManager {
   }
 
   getMode() { return this._mode; }
+
+  setCreateStateArmed(armed) {
+    this.btnAddState.classList.toggle('active', armed);
+    this.modeHint.textContent = armed
+      ? '配置したい場所をクリックして新規状態を追加'
+      : '新規状態ボタンで追加 / 右クリックでメニュー / ドラッグで移動 / Shift+ドラッグで高さ変更';
+  }
 
   // ---------- Trigger buttons (run mode) ----------
 
@@ -197,6 +205,7 @@ export class UIManager {
   _bind() {
     this.btnEdit.addEventListener('click', () => this.emit('modeChange', 'edit'));
     this.btnRun.addEventListener('click',  () => this.emit('modeChange', 'run'));
+    this.btnAddState.addEventListener('click', () => this.emit('toggleCreateState'));
     this.btnReset.addEventListener('click', () => this.emit('reset'));
     this.btnClear.addEventListener('click', () => this.emit('clear'));
     this.btnExport.addEventListener('click', () => this.emit('export'));

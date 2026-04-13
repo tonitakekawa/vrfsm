@@ -37,6 +37,6 @@ npm run pages:deploy # Cloudflare Pages にデプロイ
   - 左スティック = 移動、右スティック左右 = 旋回
 - **URLシェア**: `?id=<uuid>` でFSMを共有可能
 
-###　AI協業:
+##　協業AI
 - Claude (Anthropic)
 - GPT(OpenAI)

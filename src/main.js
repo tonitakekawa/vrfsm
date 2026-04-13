@@ -88,7 +88,9 @@ input.addXRController(ctrl1);
 
 let mode = 'edit';          // 'edit' | 'run'
 let edgeFromId = null;      // stateId when drawing an edge
+let createStateArmed = false;
 let _autoNodeCount = 1;
+const MOUSE_VERTICAL_SCALE = 0.01;
 
 const vrHud = new THREE.Group();
 camera.add(vrHud);
@@ -253,6 +255,7 @@ function setMode(m) {
   mode = m;
   world.setMode(m);
   ui.setMode(m);
+  setCreateStateArmed(false);
   cancelEdge();
 
   if (m === 'run') {
@@ -278,8 +281,15 @@ function cancelEdge() {
   refreshVrHud();
 }
 
+function setCreateStateArmed(armed) {
+  createStateArmed = mode === 'edit' && armed;
+  ui.setCreateStateArmed(createStateArmed);
+  refreshVrHud();
+}
+
 async function createNode(pos) {
   const name = await ui.showTextInput('状態名を入力');
+  setCreateStateArmed(false);
   if (!name) return;
   const id = fsm.addState(name, { x: pos.x, y: 0, z: pos.z });
   world.selectNode(id);
@@ -399,10 +409,12 @@ function refreshVrHud() {
   if (mode === 'edit' && edgeFromId) {
     const from = fsm.states.get(edgeFromId);
     hintText = `X edge from ${from?.name || '?'} / Trigger target / B cancel`;
+  } else if (mode === 'edit' && createStateArmed) {
+    hintText = 'Click floor to place new state / B cancel';
   } else if (mode === 'edit' && selected) {
     hintText = `Selected ${selected.name} / A add / X edge / Y initial / B clear`;
   } else if (mode === 'edit') {
-    hintText = 'Aim floor + A add node / Trigger select / Grip drag node';
+    hintText = 'Use New State button or A / Trigger select / Grip drag node / Shift+drag height';
   } else {
     hintText = 'Use toolbar on Mac or edge trigger in VR to step';
   }
@@ -470,22 +482,44 @@ input.on('miss', ({ hit }) => {
     }
     world.clearSelection();
     refreshVrHud();
-    if (hit?.point) createNode(hit.point);
+    if (createStateArmed && hit?.point) createNode(hit.point);
   }
 });
 
 // Drag
 let _dragStateId = null;
-input.on('drag', ({ hit, target }) => {
+let _dragStartPos = null;
+input.on('drag', ({ hit, target, source, shiftKey, deltaY, controllerDelta }) => {
   if (mode !== 'edit') return;
-  if (!_dragStateId) _dragStateId = target;
-  if (_dragStateId && hit?.point) {
+  if (!_dragStateId) {
+    _dragStateId = target;
+    _dragStartPos = world.getNodePosition(target);
+  }
+  if (!_dragStateId || !_dragStartPos) return;
+
+  if (source === 'mouse' && shiftKey) {
     orbit.enabled = false;
-    world.setNodePosition(_dragStateId, hit.point);
+    const current = world.getNodePosition(_dragStateId) || _dragStartPos;
+    const y = Math.max(-0.1, _dragStartPos.y - (deltaY * MOUSE_VERTICAL_SCALE));
+    world.setNodePosition(_dragStateId, new THREE.Vector3(current.x, y, current.z));
+    return;
+  }
+
+  if (source === 'xr' && hit?.point) {
+    orbit.enabled = false;
+    const y = Math.max(-0.1, _dragStartPos.y + (controllerDelta?.y || 0));
+    world.setNodePosition(_dragStateId, new THREE.Vector3(hit.point.x, y, hit.point.z));
+    return;
+  }
+
+  if (hit?.point) {
+    orbit.enabled = false;
+    world.setNodePosition(_dragStateId, new THREE.Vector3(hit.point.x, _dragStartPos.y, hit.point.z));
   }
 });
 input.on('dragEnd', () => {
   _dragStateId = null;
+  _dragStartPos = null;
   orbit.enabled = true;
   refreshVrHud();
 });
@@ -560,6 +594,7 @@ input.on('xrButtonDown', ({ handedness, index }) => {
 
   if (handedness === 'right' && index === 5) {
     cancelEdge();
+    setCreateStateArmed(false);
     ui.showToast('選択を解除しました');
     return;
   }
@@ -583,6 +618,11 @@ input.on('xrButtonDown', ({ handedness, index }) => {
 // ============================================================
 
 ui.on('modeChange', m => setMode(m));
+
+ui.on('toggleCreateState', () => {
+  if (mode !== 'edit') return;
+  setCreateStateArmed(!createStateArmed);
+});
 
 ui.on('fireTrigger', ({ trigger }) => {
   const transition = fsm.getAvailableTransitions().find(t => t.trigger === trigger);
