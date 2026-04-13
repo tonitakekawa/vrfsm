@@ -306,7 +306,9 @@ class EdgeMesh {
       fontSize: 28,
       scaleX: 1.4,
       scaleY: 0.36,
-      bg: 'rgba(5,5,15,0.8)',
+      color: '#d9e7ff',
+      frame: false,
+      shadow: true,
     });
     this.label.material.depthTest = false;
     this.group.add(this.label);
