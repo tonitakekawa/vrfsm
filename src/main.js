@@ -119,6 +119,58 @@ vrHud.add(vrHintLabel);
 const SLOT_LOCAL_KEY = 'vrfsm_slot';
 let _slotId = null;
 
+function getLocalDataKey(id = getSlotId()) {
+  return `vrfsm_data:${id}`;
+}
+
+function isValidFSMData(data) {
+  return !!data
+    && Array.isArray(data.states)
+    && Array.isArray(data.transitions);
+}
+
+function tryLoadFSMJson(json) {
+  try {
+    const data = JSON.parse(json);
+    if (!isValidFSMData(data)) return false;
+  } catch (_) {
+    return false;
+  }
+  return fsm.fromJSON(json);
+}
+
+function exportFSM() {
+  const blob = new Blob([fsm.toJSON()], { type: 'application/json' });
+  const link = document.createElement('a');
+  const id = getSlotId();
+  link.href = URL.createObjectURL(blob);
+  link.download = `vrfsm-${id}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(link.href);
+  ui.showToast('JSONを書き出しました');
+}
+
+async function importFSMFile(file) {
+  const text = await file.text();
+  if (!tryLoadFSMJson(text)) {
+    ui.showToast('JSONを読み込めませんでした');
+    return;
+  }
+  updateAutoNodeCounter();
+  cancelEdge();
+  if (mode === 'run') {
+    fsm.start();
+    ui.showTriggerButtons(fsm.getAvailableTransitions());
+  } else {
+    ui.hideTriggerButtons();
+  }
+  refreshActionPanel();
+  scheduleSave();
+  ui.showToast('JSONを読み込みました');
+}
+
 function getSlotId() {
   if (_slotId) return _slotId;
   const params = new URLSearchParams(location.search);
@@ -140,19 +192,30 @@ async function loadData() {
   try {
     const res = await fetch(`/api/fsm?id=${id}`);
     if (res.ok) {
-      fsm.fromJSON(await res.text());
-      world.sync();
-      return;
+      const text = await res.text();
+      if (tryLoadFSMJson(text)) return;
+      throw new Error('Invalid FSM payload');
     }
-    // 404 = 新規スロット、localStorageにフォールバック
     if (res.status !== 404) throw new Error(res.status);
-  } catch (_) {
-    // ローカル開発時（/api/fsm が存在しない）はlocalStorageにフォールバック
-    try {
-      const saved = localStorage.getItem('vrfsm_data');
-      if (saved) { fsm.fromJSON(saved); world.sync(); return; }
-    } catch (__) {}
-  }
+  } catch (_) {}
+
+  try {
+    const saved = localStorage.getItem(getLocalDataKey(id));
+    if (saved && tryLoadFSMJson(saved)) return;
+  } catch (__) {}
+
+  try {
+    const legacy = localStorage.getItem('vrfsm_data');
+    if (legacy) {
+      localStorage.setItem(getLocalDataKey(id), legacy);
+      localStorage.removeItem('vrfsm_data');
+      if (tryLoadFSMJson(legacy)) {
+        scheduleSave();
+        return;
+      }
+    }
+  } catch (__) {}
+
   loadDefaultFSM(fsm);
   world.sync();
   scheduleSave();
@@ -171,15 +234,15 @@ function scheduleSave() {
       });
       if (!res.ok) throw new Error(res.status);
     } catch (_) {
-      // フォールバック: localStorageに保存
-      try { localStorage.setItem('vrfsm_data', json); } catch (__) {}
+      // フォールバック: idごとに localStorage に保存
+      try { localStorage.setItem(getLocalDataKey(), json); } catch (__) {}
     }
     ui.markSaved();
   }, 600);
 }
 
 ['stateAdded','stateRemoved','stateRenamed','statePositionChanged',
- 'transitionAdded','transitionRemoved','triggerRenamed','initialStateChanged'
+ 'transitionAdded','transitionRemoved','triggerRenamed','initialStateChanged','stateActionChanged'
 ].forEach(ev => fsm.on(ev, scheduleSave));
 
 // ============================================================
@@ -200,6 +263,7 @@ function setMode(m) {
     ui.hideTriggerButtons();
   }
 
+  refreshActionPanel();
   refreshVrHud();
 }
 
@@ -260,6 +324,16 @@ async function renameNode(id) {
   if (!s) return;
   const name = await ui.showTextInput('新しい状態名', s.name);
   if (name) fsm.renameState(id, name);
+}
+
+async function editStateAction(id) {
+  const s = fsm.states.get(id);
+  if (!s) return;
+  const action = await ui.showTextAreaInput('状態アクションを入力', s.action || '');
+  if (action === null) return;
+  fsm.setStateAction(id, action);
+  ui.showToast(action ? 'アクションを更新しました' : 'アクションをクリアしました');
+  refreshActionPanel();
 }
 
 async function renameTrigger(tid) {
@@ -335,6 +409,19 @@ function refreshVrHud() {
 
   updateLabel(vrModeLabel, modeText);
   updateLabel(vrHintLabel, hintText);
+}
+
+function refreshActionPanel() {
+  if (mode !== 'run') {
+    ui.hideActionPanel();
+    return;
+  }
+  const state = fsm.states.get(fsm.currentStateId);
+  if (!state) {
+    ui.hideActionPanel();
+    return;
+  }
+  ui.showActionPanel(state.name, state.action || '');
 }
 
 // ============================================================
@@ -413,6 +500,7 @@ input.on('contextmenu', ({ hit, x, y }) => {
     const s = fsm.states.get(stateId);
     ui.showContextMenu(x, y, [
       { label: '名前変更', action: () => renameNode(stateId) },
+      { label: 'アクション編集', action: () => editStateAction(stateId) },
       { label: 'ここからエッジを引く', action: () => startEdge(stateId) },
       { label: '初期状態に設定', action: () => fsm.setInitialState(stateId) },
       { sep: true },
@@ -505,6 +593,7 @@ ui.on('reset', () => {
   if (mode === 'run') {
     fsm.start();
     ui.showTriggerButtons(fsm.getAvailableTransitions());
+    refreshActionPanel();
   } else {
     fsm.reset();
   }
@@ -517,12 +606,27 @@ ui.on('clear', () => {
   ui.showToast('クリアしました');
 });
 
+ui.on('export', () => {
+  exportFSM();
+});
+
+ui.on('importFile', async ({ file }) => {
+  await importFSMFile(file);
+});
+
 // FSM events → UI update in run mode
 fsm.on('currentStateChanged', () => {
   if (mode === 'run') {
     ui.showTriggerButtons(fsm.getAvailableTransitions());
   }
+  refreshActionPanel();
   refreshVrHud();
+});
+
+fsm.on('stateActionChanged', ({ id }) => {
+  if (mode === 'run' && id === fsm.currentStateId) {
+    refreshActionPanel();
+  }
 });
 
 // ============================================================

@@ -9,6 +9,9 @@ export class UIManager {
     this.btnRun     = document.getElementById('btn-run');
     this.btnReset   = document.getElementById('btn-reset');
     this.btnClear   = document.getElementById('btn-clear');
+    this.btnExport  = document.getElementById('btn-export');
+    this.btnImport  = document.getElementById('btn-import');
+    this.fileImport = document.getElementById('file-import');
     this.modeHint   = document.getElementById('mode-hint');
     this.triggerPanel = document.getElementById('trigger-panel');
     this.ctxMenu    = document.getElementById('context-menu');
@@ -19,9 +22,14 @@ export class UIManager {
     this._dialogOverlay = document.getElementById('dialog-overlay');
     this._dialogTitle   = document.getElementById('dialog-title');
     this._dialogInput   = document.getElementById('dialog-input');
+    this._dialogTextarea = document.getElementById('dialog-textarea');
     this._dialogCancel  = document.getElementById('dialog-cancel');
     this._dialogOk      = document.getElementById('dialog-ok');
     this._dialogResolve = null;
+    this._dialogMode    = 'text';
+    this.actionPanel    = document.getElementById('action-panel');
+    this.actionPanelName = document.getElementById('action-panel-name');
+    this.actionPanelBody = document.getElementById('action-panel-body');
 
     this._bind();
   }
@@ -121,8 +129,11 @@ export class UIManager {
   showTextInput(title, defaultValue = '') {
     return new Promise(resolve => {
       this._dialogResolve = resolve;
+      this._dialogMode = 'text';
       this._dialogTitle.textContent = title;
       this._dialogInput.value = defaultValue;
+      this._dialogInput.style.display = '';
+      this._dialogTextarea.style.display = 'none';
       this._dialogOverlay.style.display = 'flex';
       setTimeout(() => {
         this._dialogInput.focus();
@@ -131,12 +142,40 @@ export class UIManager {
     });
   }
 
+  showTextAreaInput(title, defaultValue = '') {
+    return new Promise(resolve => {
+      this._dialogResolve = resolve;
+      this._dialogMode = 'textarea';
+      this._dialogTitle.textContent = title;
+      this._dialogTextarea.value = defaultValue;
+      this._dialogInput.style.display = 'none';
+      this._dialogTextarea.style.display = 'block';
+      this._dialogOverlay.style.display = 'flex';
+      setTimeout(() => {
+        this._dialogTextarea.focus();
+        this._dialogTextarea.select();
+      }, 50);
+    });
+  }
+
   _resolveDialog(value) {
     this._dialogOverlay.style.display = 'none';
+    this._dialogInput.style.display = '';
+    this._dialogTextarea.style.display = 'none';
     if (this._dialogResolve) {
       this._dialogResolve(value);
       this._dialogResolve = null;
     }
+  }
+
+  showActionPanel(stateName, actionText) {
+    this.actionPanelName.textContent = stateName || '';
+    this.actionPanelBody.textContent = actionText || 'アクション未設定';
+    this.actionPanel.style.display = 'block';
+  }
+
+  hideActionPanel() {
+    this.actionPanel.style.display = 'none';
   }
 
   // ---------- Toast ----------
@@ -160,13 +199,31 @@ export class UIManager {
     this.btnRun.addEventListener('click',  () => this.emit('modeChange', 'run'));
     this.btnReset.addEventListener('click', () => this.emit('reset'));
     this.btnClear.addEventListener('click', () => this.emit('clear'));
+    this.btnExport.addEventListener('click', () => this.emit('export'));
+    this.btnImport.addEventListener('click', () => {
+      this.fileImport.value = '';
+      this.fileImport.click();
+    });
+    this.fileImport.addEventListener('change', e => {
+      const file = e.target.files?.[0] || null;
+      if (file) this.emit('importFile', { file });
+    });
 
     this._dialogOk.addEventListener('click', () => {
-      this._resolveDialog(this._dialogInput.value.trim() || null);
+      const value = this._dialogMode === 'textarea'
+        ? this._dialogTextarea.value.trim()
+        : this._dialogInput.value.trim();
+      this._resolveDialog(value || null);
     });
     this._dialogCancel.addEventListener('click', () => this._resolveDialog(null));
     this._dialogInput.addEventListener('keydown', e => {
       if (e.key === 'Enter') this._resolveDialog(this._dialogInput.value.trim() || null);
+      if (e.key === 'Escape') this._resolveDialog(null);
+    });
+    this._dialogTextarea.addEventListener('keydown', e => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        this._resolveDialog(this._dialogTextarea.value.trim() || null);
+      }
       if (e.key === 'Escape') this._resolveDialog(null);
     });
 

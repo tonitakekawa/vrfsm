@@ -3,6 +3,8 @@ import { createLabel, updateLabel } from './label.js';
 
 const NODE_RADIUS = 0.28;
 const EDGE_RADIUS = 0.018;
+const NODE_LABEL_Y = 0.02;
+const NODE_LABEL_Z = NODE_RADIUS + 0.16;
 const NODE_COLOR       = 0x4a90d9;
 const NODE_ACTIVE      = 0x00ff88;
 const NODE_SELECTED    = 0xffd700;
@@ -50,11 +52,18 @@ export class World {
   // ---------- FSM bindings ----------
 
   _bindFSM() {
+    this.fsm.on('fsmReplaced', () => {
+      this._clearAllMeshes();
+      this.sync();
+    });
     this.fsm.on('stateAdded', s => this._addNodeMesh(s));
     this.fsm.on('stateRemoved', ({ id }) => this._removeNodeMesh(id));
     this.fsm.on('stateRenamed', ({ id, name }) => {
       const nm = this.nodeMeshes.get(id);
-      if (nm) { updateLabel(nm.label, name); nm.label.position.y = NODE_RADIUS + 0.35; }
+      if (nm) {
+        updateLabel(nm.label, name);
+        nm.label.position.set(0, NODE_LABEL_Y, NODE_LABEL_Z);
+      }
     });
     this.fsm.on('statePositionChanged', ({ id, position }) => {
       const nm = this.nodeMeshes.get(id);
@@ -201,6 +210,16 @@ export class World {
   setNodePosition(id, pos) {
     this.fsm.moveState(id, { x: pos.x, y: pos.y, z: pos.z });
   }
+
+  _clearAllMeshes() {
+    for (const nm of this.nodeMeshes.values()) nm.dispose();
+    for (const em of this.edgeMeshes.values()) em.dispose();
+    this.nodeMeshes.clear();
+    this.edgeMeshes.clear();
+    this.interactableNodes.length = 0;
+    this.interactableEdges.length = 0;
+    this._selectedId = null;
+  }
 }
 
 // ============================================================
@@ -246,8 +265,13 @@ class NodeMesh {
     this.group.add(this.initialMarker);
 
     // Label
-    this.label = createLabel(state.name);
-    this.label.position.y = r + 0.35;
+    this.label = createLabel(state.name, {
+      color: '#f4f7ff',
+      frame: false,
+      shadow: true,
+    });
+    this.label.scale.set(1.45, 0.36, 1);
+    this.label.position.set(0, NODE_LABEL_Y, NODE_LABEL_Z);
     this.group.add(this.label);
 
     scene.add(this.group);

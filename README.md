@@ -1,8 +1,8 @@
 # VRFSM
 
-Three.js + WebXR でFSMをVR空間で可視化・操作するプロジェクト。
-
-VR上でFSMを構築・実行できるWebアプリ。Cloudflare Pages + KV でホスティング。
+VR上でFSMを構築・実行できるWebアプリ。
+ホスティング : Cloudflare Pages + KV
+ライブラリ : Three.js, WebXR
 
 ## ファイル構成
 

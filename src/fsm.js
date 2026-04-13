@@ -33,7 +33,7 @@ export class FSM {
 
   addState(name, position = { x: 0, y: 0, z: 0 }) {
     const id = uid('s');
-    const state = { id, name, position: { ...position } };
+    const state = { id, name, action: '', position: { ...position } };
     this.states.set(id, state);
     if (!this.initialStateId) this.initialStateId = id;
     this.emit('stateAdded', state);
@@ -68,6 +68,13 @@ export class FSM {
     if (!s) return;
     s.position = { ...position };
     this.emit('statePositionChanged', { id, position: s.position });
+  }
+
+  setStateAction(id, action) {
+    const s = this.states.get(id);
+    if (!s) return;
+    s.action = action;
+    this.emit('stateActionChanged', { id, action });
   }
 
   setInitialState(id) {
@@ -145,12 +152,24 @@ export class FSM {
   fromJSON(json) {
     try {
       const data = JSON.parse(json);
-      this.states = new Map(data.states.map(s => [s.id, s]));
+      if (!Array.isArray(data.states) || !Array.isArray(data.transitions)) return false;
+      const normalizedStates = data.states.map(s => ({
+        ...s,
+        action: typeof s.action === 'string' ? s.action : '',
+      }));
+      this.states = new Map(normalizedStates.map(s => [s.id, s]));
       this.transitions = new Map(data.transitions.map(t => [t.id, t]));
       this.initialStateId = data.initialStateId || null;
       this.currentStateId = null;
+      this.emit('fsmReplaced', {
+        states: [...this.states.values()],
+        transitions: [...this.transitions.values()],
+        initialStateId: this.initialStateId,
+      });
+      return true;
     } catch (e) {
       console.error('FSM.fromJSON failed:', e);
+      return false;
     }
   }
 }
@@ -170,6 +189,12 @@ export function loadDefaultFSM(fsm) {
   const s2 = fsm.addState('実装中',  positions[2]);
   const s3 = fsm.addState('テスト中', positions[3]);
   const s4 = fsm.addState('完了',    positions[4]);
+
+  fsm.setStateAction(s0, '要件を確認し、最初の着手ポイントを決める');
+  fsm.setStateAction(s1, '仕様を詰め、必要な画面やデータ構造を整理する');
+  fsm.setStateAction(s2, '実装を進め、途中で気づいた論点をメモする');
+  fsm.setStateAction(s3, '動作確認を行い、問題があれば原因を切り分ける');
+  fsm.setStateAction(s4, '成果を確認し、次の改善や追加要件を整理する');
 
   fsm.addTransition(s0, s1, '開始');
   fsm.addTransition(s1, s2, '設計確定');

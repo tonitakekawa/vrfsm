@@ -149,6 +149,23 @@
     }
     #dialog input:focus { border-color: #4a90d9; }
 
+    #dialog textarea {
+      width: 100%;
+      min-height: 132px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 6px;
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+      margin-bottom: 16px;
+      resize: vertical;
+      font-family: inherit;
+      display: none;
+    }
+    #dialog textarea:focus { border-color: #4a90d9; }
+
     #dialog .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; }
     #dialog .dialog-actions .btn { padding: 8px 16px; }
     #dialog .dialog-actions .btn.primary { background: rgba(74,144,217,0.4); border-color: #4a90d9; color: #fff; }
@@ -199,6 +216,41 @@
       color: rgba(255,255,255,0.3);
       pointer-events: none;
     }
+
+    #action-panel {
+      position: absolute;
+      top: 72px;
+      left: 16px;
+      max-width: 340px;
+      padding: 14px 16px;
+      background: rgba(10, 10, 20, 0.82);
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 14px;
+      backdrop-filter: blur(12px);
+      pointer-events: none;
+      display: none;
+    }
+
+    #action-panel h3 {
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.45);
+      margin-bottom: 8px;
+    }
+
+    #action-panel-name {
+      font-size: 15px;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+
+    #action-panel-body {
+      font-size: 13px;
+      line-height: 1.5;
+      color: rgba(255,255,255,0.78);
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
@@ -208,6 +260,9 @@
       <button class="btn" id="btn-run">実行</button>
       <button class="btn" id="btn-reset">リセット</button>
       <button class="btn" id="btn-clear">クリア</button>
+      <button class="btn" id="btn-export">Export</button>
+      <button class="btn" id="btn-import">Import</button>
+      <input id="file-import" type="file" accept="application/json,.json" hidden />
     </div>
 
     <div id="mode-hint">右クリック or 空白クリックでノード追加 / ノードをドラッグで移動</div>
@@ -222,11 +277,18 @@
       <div id="dialog">
         <h3 id="dialog-title"></h3>
         <input id="dialog-input" type="text" />
+        <textarea id="dialog-textarea"></textarea>
         <div class="dialog-actions">
           <button class="btn" id="dialog-cancel">キャンセル</button>
           <button class="btn primary" id="dialog-ok">OK</button>
         </div>
       </div>
+    </div>
+
+    <div id="action-panel">
+      <h3>Action</h3>
+      <div id="action-panel-name"></div>
+      <div id="action-panel-body"></div>
     </div>
 
     <div id="toast"></div>
