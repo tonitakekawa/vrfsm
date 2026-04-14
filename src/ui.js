@@ -31,6 +31,7 @@ export class UIManager {
     this.actionPanel    = document.getElementById('action-panel');
     this.actionPanelName = document.getElementById('action-panel-name');
     this.actionPanelBody = document.getElementById('action-panel-body');
+    this._triggerButtons = [];
 
     this._bind();
   }
@@ -65,8 +66,10 @@ export class UIManager {
 
   // ---------- Trigger buttons (run mode) ----------
 
-  showTriggerButtons(transitions) {
+  showTriggerButtons(transitions, opts = {}) {
+    const { disabled = false } = opts;
     this.triggerPanel.innerHTML = '';
+    this._triggerButtons = [];
     if (!transitions.length) {
       const msg = document.createElement('div');
       msg.style.cssText = 'color:rgba(255,255,255,0.4);font-size:13px;padding:10px';
@@ -78,15 +81,24 @@ export class UIManager {
       const btn = document.createElement('button');
       btn.className = 'trigger-btn';
       btn.textContent = t.trigger;
+      btn.disabled = disabled;
       btn.addEventListener('click', () => {
         this.emit('fireTrigger', { trigger: t.trigger });
       });
       this.triggerPanel.appendChild(btn);
+      this._triggerButtons.push(btn);
     }
   }
 
   hideTriggerButtons() {
     this.triggerPanel.innerHTML = '';
+    this._triggerButtons = [];
+  }
+
+  setTriggerButtonsDisabled(disabled) {
+    this._triggerButtons.forEach(btn => {
+      btn.disabled = disabled;
+    });
   }
 
   // ---------- Context menu ----------

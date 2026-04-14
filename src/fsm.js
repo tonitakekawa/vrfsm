@@ -33,7 +33,7 @@ export class FSM {
 
   addState(name, position = { x: 0, y: 0, z: 0 }) {
     const id = uid('s');
-    const state = { id, name, action: '', position: { ...position } };
+    const state = { id, name, actions: [], position: { ...position } };
     this.states.set(id, state);
     if (!this.initialStateId) this.initialStateId = id;
     this.emit('stateAdded', state);
@@ -70,11 +70,11 @@ export class FSM {
     this.emit('statePositionChanged', { id, position: s.position });
   }
 
-  setStateAction(id, action) {
+  setStateActions(id, actions) {
     const s = this.states.get(id);
     if (!s) return;
-    s.action = action;
-    this.emit('stateActionChanged', { id, action });
+    s.actions = [...actions];
+    this.emit('stateActionChanged', { id, actions: s.actions });
   }
 
   setInitialState(id) {
@@ -155,7 +155,11 @@ export class FSM {
       if (!Array.isArray(data.states) || !Array.isArray(data.transitions)) return false;
       const normalizedStates = data.states.map(s => ({
         ...s,
-        action: typeof s.action === 'string' ? s.action : '',
+        actions: Array.isArray(s.actions)
+          ? s.actions
+          : (typeof s.action === 'string' && s.action.trim()
+            ? [{ type: 'message', text: s.action.trim() }]
+            : []),
       }));
       this.states = new Map(normalizedStates.map(s => [s.id, s]));
       this.transitions = new Map(data.transitions.map(t => [t.id, t]));
@@ -190,11 +194,22 @@ export function loadDefaultFSM(fsm) {
   const s3 = fsm.addState('テスト中', positions[3]);
   const s4 = fsm.addState('完了',    positions[4]);
 
-  fsm.setStateAction(s0, '要件を確認し、最初の着手ポイントを決める');
-  fsm.setStateAction(s1, '仕様を詰め、必要な画面やデータ構造を整理する');
-  fsm.setStateAction(s2, '実装を進め、途中で気づいた論点をメモする');
-  fsm.setStateAction(s3, '動作確認を行い、問題があれば原因を切り分ける');
-  fsm.setStateAction(s4, '成果を確認し、次の改善や追加要件を整理する');
+  fsm.setStateActions(s0, [
+    { type: 'message', text: '要件を確認し、最初の着手ポイントを決める' },
+  ]);
+  fsm.setStateActions(s1, [
+    { type: 'message', text: '仕様を詰め、必要な画面やデータ構造を整理する' },
+    { type: 'wait', durationMs: 800 },
+  ]);
+  fsm.setStateActions(s2, [
+    { type: 'message', text: '実装を進め、途中で気づいた論点をメモする' },
+  ]);
+  fsm.setStateActions(s3, [
+    { type: 'message', text: '動作確認を行い、問題があれば原因を切り分ける' },
+  ]);
+  fsm.setStateActions(s4, [
+    { type: 'message', text: '成果を確認し、次の改善や追加要件を整理する' },
+  ]);
 
   fsm.addTransition(s0, s1, '開始');
   fsm.addTransition(s1, s2, '設計確定');

@@ -91,6 +91,8 @@ let edgeFromId = null;      // stateId when drawing an edge
 let createStateArmed = false;
 let _autoNodeCount = 1;
 const MOUSE_VERTICAL_SCALE = 0.01;
+let _actionRunToken = 0;
+let _actionsBusy = false;
 
 const vrHud = new THREE.Group();
 camera.add(vrHud);
@@ -131,6 +133,77 @@ function isValidFSMData(data) {
     && Array.isArray(data.transitions);
 }
 
+function parseWaitDuration(text) {
+  const value = text.trim().toLowerCase();
+  if (!value) throw new Error('wait は時間を指定してください');
+  if (value.endsWith('ms')) {
+    const ms = Number(value.slice(0, -2));
+    if (!Number.isFinite(ms) || ms < 0) throw new Error('wait の ms が不正です');
+    return Math.round(ms);
+  }
+  if (value.endsWith('s')) {
+    const sec = Number(value.slice(0, -1));
+    if (!Number.isFinite(sec) || sec < 0) throw new Error('wait の秒数が不正です');
+    return Math.round(sec * 1000);
+  }
+  const ms = Number(value);
+  if (!Number.isFinite(ms) || ms < 0) throw new Error('wait の時間が不正です');
+  return Math.round(ms);
+}
+
+function parseActionScript(script) {
+  const lines = script.split(/\r?\n/).map(line => line.trim());
+  const actions = [];
+  for (const line of lines) {
+    if (!line || line.startsWith('#')) continue;
+    const idx = line.indexOf(':');
+    if (idx === -1) throw new Error(`書式エラー: ${line}`);
+    const type = line.slice(0, idx).trim().toLowerCase();
+    const value = line.slice(idx + 1).trim();
+    if (type === 'message') {
+      if (!value) throw new Error('message は本文を指定してください');
+      actions.push({ type: 'message', text: value });
+    } else if (type === 'wait') {
+      actions.push({ type: 'wait', durationMs: parseWaitDuration(value) });
+    } else {
+      throw new Error(`未対応アクション: ${type}`);
+    }
+  }
+  return actions;
+}
+
+function actionToScriptLine(action) {
+  if (action.type === 'message') return `message: ${action.text || ''}`;
+  if (action.type === 'wait') return `wait: ${action.durationMs}ms`;
+  return '';
+}
+
+function actionsToScript(actions = []) {
+  return actions.map(actionToScriptLine).filter(Boolean).join('\n');
+}
+
+function formatWait(ms) {
+  if (ms % 1000 === 0) return `${ms / 1000}s`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function describeAction(action, active = false) {
+  const prefix = active ? '▶ ' : '• ';
+  if (action.type === 'message') return `${prefix}message: ${action.text}`;
+  if (action.type === 'wait') return `${prefix}wait: ${formatWait(action.durationMs)}`;
+  return `${prefix}${action.type}`;
+}
+
+function waitMs(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function cancelActionRun() {
+  _actionRunToken += 1;
+  _actionsBusy = false;
+  ui.setTriggerButtonsDisabled(false);
+}
+
 function tryLoadFSMJson(json) {
   try {
     const data = JSON.parse(json);
@@ -155,6 +228,7 @@ function exportFSM() {
 }
 
 async function importFSMFile(file) {
+  cancelActionRun();
   const text = await file.text();
   if (!tryLoadFSMJson(text)) {
     ui.showToast('JSONを読み込めませんでした');
@@ -164,11 +238,11 @@ async function importFSMFile(file) {
   cancelEdge();
   if (mode === 'run') {
     fsm.start();
-    ui.showTriggerButtons(fsm.getAvailableTransitions());
+    ui.showTriggerButtons(fsm.getAvailableTransitions(), { disabled: _actionsBusy });
   } else {
     ui.hideTriggerButtons();
+    refreshActionPanel();
   }
-  refreshActionPanel();
   scheduleSave();
   ui.showToast('JSONを読み込みました');
 }
@@ -252,6 +326,7 @@ function scheduleSave() {
 // ============================================================
 
 function setMode(m) {
+  cancelActionRun();
   mode = m;
   world.setMode(m);
   ui.setMode(m);
@@ -260,13 +335,12 @@ function setMode(m) {
 
   if (m === 'run') {
     fsm.start();
-    ui.showTriggerButtons(fsm.getAvailableTransitions());
+    ui.showTriggerButtons(fsm.getAvailableTransitions(), { disabled: _actionsBusy });
   } else {
     fsm.reset();
     ui.hideTriggerButtons();
+    refreshActionPanel();
   }
-
-  refreshActionPanel();
   refreshVrHud();
 }
 
@@ -339,10 +413,18 @@ async function renameNode(id) {
 async function editStateAction(id) {
   const s = fsm.states.get(id);
   if (!s) return;
-  const action = await ui.showTextAreaInput('状態アクションを入力', s.action || '');
-  if (action === null) return;
-  fsm.setStateAction(id, action);
-  ui.showToast(action ? 'アクションを更新しました' : 'アクションをクリアしました');
+  const script = await ui.showTextAreaInput(
+    '状態アクションを入力 (message: / wait: 例 1000ms, 1.5s)',
+    actionsToScript(s.actions || []),
+  );
+  if (script === null) return;
+  try {
+    const actions = parseActionScript(script);
+    fsm.setStateActions(id, actions);
+    ui.showToast(actions.length ? 'アクションを更新しました' : 'アクションをクリアしました');
+  } catch (err) {
+    ui.showToast(err.message || 'アクションを解釈できませんでした', 2800);
+  }
   refreshActionPanel();
 }
 
@@ -382,13 +464,17 @@ function getGroundPointFromAnyController() {
 }
 
 function fireTransitionById(id) {
+  if (_actionsBusy) {
+    ui.showToast('アクション実行中です');
+    return false;
+  }
   const transition = fsm.transitions.get(id);
   if (!transition) return false;
   const ok = fsm.fire(transition.trigger);
   if (ok) {
     const state = fsm.states.get(fsm.currentStateId);
     ui.showToast(`→ ${state?.name || '?'}`);
-    ui.showTriggerButtons(fsm.getAvailableTransitions());
+    ui.showTriggerButtons(fsm.getAvailableTransitions(), { disabled: _actionsBusy });
   } else {
     ui.showToast('遷移できません');
   }
@@ -423,7 +509,7 @@ function refreshVrHud() {
   updateLabel(vrHintLabel, hintText);
 }
 
-function refreshActionPanel() {
+function refreshActionPanel(activeIndex = -1, headerText = '') {
   if (mode !== 'run') {
     ui.hideActionPanel();
     return;
@@ -433,7 +519,50 @@ function refreshActionPanel() {
     ui.hideActionPanel();
     return;
   }
-  ui.showActionPanel(state.name, state.action || '');
+  const actions = state.actions || [];
+  const body = [];
+  if (headerText) body.push(headerText);
+  if (!actions.length) {
+    body.push('アクション未設定');
+  } else {
+    body.push(...actions.map((action, index) => describeAction(action, index === activeIndex)));
+  }
+  ui.showActionPanel(state.name, body.join('\n'));
+}
+
+async function runStateActions(stateId) {
+  const state = fsm.states.get(stateId);
+  const runToken = ++_actionRunToken;
+  const actions = state?.actions || [];
+
+  if (!state || mode !== 'run') return;
+  if (!actions.length) {
+    _actionsBusy = false;
+    ui.setTriggerButtonsDisabled(false);
+    refreshActionPanel();
+    return;
+  }
+
+  _actionsBusy = true;
+  ui.setTriggerButtonsDisabled(true);
+
+  for (let i = 0; i < actions.length; i += 1) {
+    if (runToken !== _actionRunToken || mode !== 'run' || fsm.currentStateId !== stateId) return;
+    const action = actions[i];
+    if (action.type === 'message') {
+      refreshActionPanel(i, 'アクション実行中');
+      ui.showToast(action.text, 2400);
+      await waitMs(250);
+    } else if (action.type === 'wait') {
+      refreshActionPanel(i, `待機中 ${formatWait(action.durationMs)}`);
+      await waitMs(action.durationMs);
+    }
+  }
+
+  if (runToken !== _actionRunToken || mode !== 'run' || fsm.currentStateId !== stateId) return;
+  _actionsBusy = false;
+  ui.setTriggerButtonsDisabled(false);
+  refreshActionPanel(-1, 'アクション完了');
 }
 
 // ============================================================
@@ -630,12 +759,13 @@ ui.on('fireTrigger', ({ trigger }) => {
 });
 
 ui.on('reset', () => {
+  cancelActionRun();
   if (mode === 'run') {
     fsm.start();
-    ui.showTriggerButtons(fsm.getAvailableTransitions());
-    refreshActionPanel();
+    ui.showTriggerButtons(fsm.getAvailableTransitions(), { disabled: _actionsBusy });
   } else {
     fsm.reset();
+    refreshActionPanel();
   }
 });
 
@@ -657,9 +787,11 @@ ui.on('importFile', async ({ file }) => {
 // FSM events → UI update in run mode
 fsm.on('currentStateChanged', () => {
   if (mode === 'run') {
-    ui.showTriggerButtons(fsm.getAvailableTransitions());
+    ui.showTriggerButtons(fsm.getAvailableTransitions(), { disabled: _actionsBusy });
+    runStateActions(fsm.currentStateId);
+  } else {
+    refreshActionPanel();
   }
-  refreshActionPanel();
   refreshVrHud();
 });
 

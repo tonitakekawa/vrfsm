@@ -1,0 +1,313 @@
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+canvas { display: block; }
+#wrap { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 2rem 0; }
+#btn { font-size: 14px; padding: 8px 24px; cursor: pointer; }
+#label { font-size: 13px; color: var(--color-text-secondary); height: 20px; }
+</style>
+<div id="wrap">
+  <canvas id="c" width="400" height="260"></canvas>
+  <div id="label">？？？</div>
+  <button id="btn">もう一度</button>
+</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const label = document.getElementById('label');
+const btn = document.getElementById('btn');
+
+const W = 400, H = 260;
+let t = 0;
+let phase = 'chaos';
+let phaseT = 0;
+let animId;
+
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx;
+
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new AudioCtx();
+}
+
+function playClick(freq, dur) {
+  ensureAudio();
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.connect(g); g.connect(audioCtx.destination);
+  osc.frequency.value = freq;
+  osc.type = 'sine';
+  g.gain.setValueAtTime(0.3, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  osc.start(); osc.stop(audioCtx.currentTime + dur);
+}
+
+function playNoise(dur) {
+  ensureAudio();
+  const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * dur, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * 0.15;
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(audioCtx.destination);
+  src.start();
+}
+
+// Face expressions
+const exprs = [
+  { eyes: 'angry', mouth: 'frown', brows: 'down' },
+  { eyes: 'happy', mouth: 'smile', brows: 'up' },
+  { eyes: 'worried', mouth: 'wavydown', brows: 'knit' },
+  { eyes: 'neutral', mouth: 'flat', brows: 'flat' },
+];
+
+function drawFace(x, y, r, expr, alpha, wobble) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x + Math.sin(wobble * 3.1) * 4, y + Math.cos(wobble * 2.7) * 3);
+
+  // head
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#f5c842';
+  ctx.fill();
+  ctx.strokeStyle = '#c9a000';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // eyes
+  const ew = r * 0.13;
+  if (expr.eyes === 'happy') {
+    [-1,1].forEach(s => {
+      ctx.beginPath();
+      ctx.arc(s * r * 0.3, -r * 0.1, ew, Math.PI, 0);
+      ctx.strokeStyle = '#333'; ctx.lineWidth = 2.5; ctx.stroke();
+    });
+  } else if (expr.eyes === 'angry') {
+    [-1,1].forEach(s => {
+      ctx.beginPath();
+      ctx.arc(s * r * 0.3, -r * 0.1, ew * 1.1, 0.2, Math.PI - 0.2);
+      ctx.strokeStyle = '#333'; ctx.lineWidth = 2.5; ctx.stroke();
+    });
+  } else if (expr.eyes === 'worried') {
+    [-1,1].forEach(s => {
+      ctx.beginPath();
+      ctx.ellipse(s * r * 0.3, -r * 0.1, ew * 0.8, ew * 1.3, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#333'; ctx.fill();
+    });
+  } else {
+    [-1,1].forEach(s => {
+      ctx.beginPath();
+      ctx.arc(s * r * 0.3, -r * 0.1, ew, 0, Math.PI * 2);
+      ctx.fillStyle = '#333'; ctx.fill();
+    });
+  }
+
+  // brows
+  ctx.lineWidth = 2.5; ctx.strokeStyle = '#555';
+  if (expr.brows === 'down') {
+    [-1,1].forEach(s => {
+      ctx.beginPath();
+      ctx.moveTo(s * (r*0.18), -r*0.32);
+      ctx.lineTo(s * (r*0.42), -r*0.22);
+      ctx.stroke();
+    });
+  } else if (expr.brows === 'up') {
+    [-1,1].forEach(s => {
+      ctx.beginPath();
+      ctx.moveTo(s * (r*0.18), -r*0.28);
+      ctx.lineTo(s * (r*0.42), -r*0.38);
+      ctx.stroke();
+    });
+  } else if (expr.brows === 'knit') {
+    [-1,1].forEach(s => {
+      ctx.beginPath();
+      ctx.moveTo(s * (r*0.18), -r*0.28);
+      ctx.lineTo(s * (r*0.42), -r*0.28);
+      ctx.stroke();
+    });
+  } else {
+    [-1,1].forEach(s => {
+      ctx.beginPath();
+      ctx.moveTo(s * (r*0.18), -r*0.30);
+      ctx.lineTo(s * (r*0.42), -r*0.30);
+      ctx.stroke();
+    });
+  }
+
+  // mouth
+  ctx.lineWidth = 2.5; ctx.strokeStyle = '#333';
+  if (expr.mouth === 'smile') {
+    ctx.beginPath();
+    ctx.arc(0, r*0.15, r*0.3, 0.2, Math.PI - 0.2);
+    ctx.stroke();
+  } else if (expr.mouth === 'frown') {
+    ctx.beginPath();
+    ctx.arc(0, r*0.5, r*0.3, Math.PI + 0.2, -0.2);
+    ctx.stroke();
+  } else if (expr.mouth === 'wavydown') {
+    ctx.beginPath();
+    ctx.moveTo(-r*0.3, r*0.3);
+    ctx.quadraticCurveTo(-r*0.1, r*0.22, 0, r*0.3);
+    ctx.quadraticCurveTo(r*0.1, r*0.38, r*0.3, r*0.3);
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(-r*0.25, r*0.3);
+    ctx.lineTo(r*0.25, r*0.3);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// FSM nodes
+const nodes = [
+  { id: 0, label: '😠 怒り', x: 90, y: 80, color: '#f87171', tc: '#7f1d1d' },
+  { id: 1, label: '😊 喜び', x: 310, y: 80, color: '#86efac', tc: '#14532d' },
+  { id: 2, label: '😟 不安', x: 90, y: 200, color: '#93c5fd', tc: '#1e3a5f' },
+  { id: 3, label: '😐 普通', x: 310, y: 200, color: '#fcd34d', tc: '#451a03' },
+];
+
+const arrows = [
+  [0,1],[1,3],[3,2],[2,0],[0,3],[1,2]
+];
+
+function drawFSM(alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  arrows.forEach(([a,b]) => {
+    const na = nodes[a], nb = nodes[b];
+    ctx.beginPath();
+    ctx.moveTo(na.x, na.y);
+    ctx.lineTo(nb.x, nb.y);
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    const dx = nb.x - na.x, dy = nb.y - na.y;
+    const len = Math.sqrt(dx*dx + dy*dy);
+    const r = 32;
+    const ex = nb.x - dx/len*r, ey = nb.y - dy/len*r;
+    const ax = -dy/len*6, ay = dx/len*6;
+    ctx.beginPath();
+    ctx.moveTo(ex + ax, ey + ay);
+    ctx.lineTo(nb.x - dx/len*(r-8), nb.y - dy/len*(r-8));
+    ctx.lineTo(ex - ax, ey - ay);
+    ctx.stroke();
+  });
+
+  nodes.forEach(n => {
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, 32, 0, Math.PI * 2);
+    ctx.fillStyle = n.color;
+    ctx.fill();
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.fillStyle = n.tc;
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(n.label, n.x, n.y);
+  });
+
+  ctx.restore();
+}
+
+let noiseTimer = 0;
+let chaosExprIdx = 0;
+let exprChangeTimer = 0;
+
+function reset() {
+  cancelAnimationFrame(animId);
+  t = 0; phaseT = 0; phase = 'chaos';
+  noiseTimer = 0; chaosExprIdx = 0; exprChangeTimer = 0;
+  label.textContent = '？？？';
+  loop();
+}
+
+function loop() {
+  ctx.clearRect(0, 0, W, H);
+  t += 0.016;
+  phaseT += 0.016;
+
+  if (phase === 'chaos') {
+    // Noisy face
+    exprChangeTimer += 0.016;
+    if (exprChangeTimer > 0.25) {
+      chaosExprIdx = (chaosExprIdx + 1) % exprs.length;
+      exprChangeTimer = 0;
+    }
+    const wobble = t;
+    const e1 = exprs[chaosExprIdx];
+    const e2 = exprs[(chaosExprIdx + 1) % exprs.length];
+    const blend = exprChangeTimer / 0.25;
+    drawFace(W/2 - 30, H/2 - 10, 55, e1, 1 - blend * 0.5, wobble);
+    drawFace(W/2 + 30, H/2 + 10, 55, e2, blend * 0.8, wobble * 1.3);
+
+    noiseTimer += 0.016;
+    if (noiseTimer > 0.3) { playNoise(0.08); noiseTimer = 0; }
+
+    label.textContent = '今どの状態？わからない…';
+
+    if (phaseT > 3.5) {
+      phase = 'transition';
+      phaseT = 0;
+    }
+
+  } else if (phase === 'transition') {
+    const p = Math.min(phaseT / 1.2, 1);
+    const ease = p < 0.5 ? 2*p*p : -1+(4-2*p)*p;
+
+    // Face shrinking/moving to top-left
+    const fx = W/2 - 30 + (nodes[3].x - (W/2-30)) * ease;
+    const fy = H/2 - 10 + (nodes[3].y - (H/2-10)) * ease;
+    const fr = 55 * (1 - ease * 0.42);
+    drawFace(fx, fy, fr, exprs[3], 1, t * (1 - ease));
+
+    // FSM fading in
+    drawFSM(ease);
+
+    if (p > 0.3 && p < 0.6) {
+      label.textContent = '状態として切り出す…';
+    }
+
+    if (p >= 1) {
+      phase = 'settled';
+      phaseT = 0;
+      playClick(880, 0.3);
+      setTimeout(() => playClick(1100, 0.25), 120);
+      setTimeout(() => playClick(1320, 0.2), 220);
+    }
+
+  } else if (phase === 'settled') {
+    drawFSM(1);
+
+    // Pulse on "普通" node
+    const pulse = Math.sin(phaseT * 4) * 0.3 + 0.7;
+    ctx.save();
+    ctx.globalAlpha = pulse;
+    ctx.beginPath();
+    ctx.arc(nodes[3].x, nodes[3].y, 36, 0, Math.PI * 2);
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.restore();
+
+    label.textContent = '状態が切れた。すっきり。';
+
+    if (phaseT > 4) {
+      cancelAnimationFrame(animId);
+      return;
+    }
+  }
+
+  animId = requestAnimationFrame(loop);
+}
+
+btn.addEventListener('click', () => { ensureAudio(); reset(); });
+reset();
+</script>
