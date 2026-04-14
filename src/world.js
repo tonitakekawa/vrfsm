@@ -72,8 +72,9 @@ export class World {
         this._refreshEdgesForState(id);
       }
     });
-    this.fsm.on('initialStateChanged', ({ id }) => {
-      for (const [sid, nm] of this.nodeMeshes) nm.setInitial(sid === id);
+    this.fsm.on('initialStatesChanged', ({ ids }) => {
+      const initialIds = new Set(ids || []);
+      for (const [sid, nm] of this.nodeMeshes) nm.setInitial(initialIds.has(sid));
     });
     this.fsm.on('transitionAdded', t => this._addEdgeMesh(t));
     this.fsm.on('transitionRemoved', ({ id }) => this._removeEdgeMesh(id));
@@ -81,9 +82,9 @@ export class World {
       const em = this.edgeMeshes.get(id);
       if (em) updateLabel(em.label, trigger);
     });
-    this.fsm.on('currentStateChanged', ({ prevId, nextId }) => {
-      if (prevId) this.nodeMeshes.get(prevId)?.setActive(false);
-      if (nextId) this.nodeMeshes.get(nextId)?.setActive(true);
+    this.fsm.on('activeStatesChanged', ({ nextIds }) => {
+      const activeIds = new Set(nextIds || []);
+      for (const [sid, nm] of this.nodeMeshes) nm.setActive(activeIds.has(sid));
       this._refreshEdgeColors();
     });
   }
@@ -93,8 +94,12 @@ export class World {
   sync() {
     for (const s of this.fsm.states.values()) this._addNodeMesh(s);
     for (const t of this.fsm.transitions.values()) this._addEdgeMesh(t);
-    // mark initial
-    for (const [sid, nm] of this.nodeMeshes) nm.setInitial(sid === this.fsm.initialStateId);
+    const initialIds = new Set(this.fsm.getInitialStateIds());
+    const activeIds = new Set(this.fsm.getActiveStateIds());
+    for (const [sid, nm] of this.nodeMeshes) {
+      nm.setInitial(initialIds.has(sid));
+      nm.setActive(activeIds.has(sid));
+    }
   }
 
   // ---------- Mode ----------
@@ -130,7 +135,8 @@ export class World {
     this.nodeMeshes.set(state.id, nm);
     this.interactableNodes.push(nm.sphere);
     nm.sphere.userData.stateId = state.id;
-    nm.setInitial(state.id === this.fsm.initialStateId);
+    nm.setInitial(this.fsm.isInitialState(state.id));
+    nm.setActive(this.fsm.isStateActive(state.id));
   }
 
   _removeNodeMesh(id) {

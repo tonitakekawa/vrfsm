@@ -7,8 +7,8 @@ export class FSM {
   constructor() {
     this.states = new Map();
     this.transitions = new Map();
-    this.currentStateId = null;
-    this.initialStateId = null;
+    this.currentStateIds = new Set();
+    this.initialStateIds = [];
     this._listeners = {};
   }
 
@@ -35,7 +35,7 @@ export class FSM {
     const id = uid('s');
     const state = { id, name, actions: [], position: { ...position } };
     this.states.set(id, state);
-    if (!this.initialStateId) this.initialStateId = id;
+    if (!this.initialStateIds.length) this.initialStateIds = [id];
     this.emit('stateAdded', state);
     return id;
   }
@@ -43,10 +43,12 @@ export class FSM {
   removeState(id) {
     if (!this.states.has(id)) return;
     this.states.delete(id);
-    if (this.initialStateId === id) {
-      this.initialStateId = this.states.size > 0 ? this.states.keys().next().value : null;
+    this.initialStateIds = this.initialStateIds.filter(sid => sid !== id);
+    if (!this.initialStateIds.length && this.states.size > 0) {
+      this.initialStateIds = [this.states.keys().next().value];
     }
-    if (this.currentStateId === id) this.currentStateId = null;
+    const prevActive = [...this.currentStateIds];
+    this.currentStateIds.delete(id);
     // remove connected transitions
     const toRemove = [];
     for (const t of this.transitions.values()) {
@@ -54,6 +56,10 @@ export class FSM {
     }
     toRemove.forEach(tid => this.removeTransition(tid));
     this.emit('stateRemoved', { id });
+    this.emit('initialStatesChanged', { ids: [...this.initialStateIds] });
+    if (prevActive.length !== this.currentStateIds.size) {
+      this.emit('activeStatesChanged', { prevIds: prevActive, nextIds: [...this.currentStateIds] });
+    }
   }
 
   renameState(id, name) {
@@ -79,8 +85,21 @@ export class FSM {
 
   setInitialState(id) {
     if (!this.states.has(id)) return;
-    this.initialStateId = id;
-    this.emit('initialStateChanged', { id });
+    if (!this.initialStateIds.includes(id)) this.initialStateIds.push(id);
+    this.emit('initialStatesChanged', { ids: [...this.initialStateIds] });
+  }
+
+  toggleInitialState(id) {
+    if (!this.states.has(id)) return;
+    if (this.initialStateIds.includes(id)) {
+      this.initialStateIds = this.initialStateIds.filter(sid => sid !== id);
+      if (!this.initialStateIds.length && this.states.size > 0) {
+        this.initialStateIds = [id];
+      }
+    } else {
+      this.initialStateIds.push(id);
+    }
+    this.emit('initialStatesChanged', { ids: [...this.initialStateIds] });
   }
 
   // ---------- Transitions ----------
@@ -110,33 +129,72 @@ export class FSM {
   // ---------- Execution ----------
 
   start() {
-    const prev = this.currentStateId;
-    this.currentStateId = this.initialStateId;
-    this.emit('currentStateChanged', { prevId: prev, nextId: this.currentStateId });
+    const prevIds = [...this.currentStateIds];
+    this.currentStateIds = new Set(this.initialStateIds.filter(id => this.states.has(id)));
+    this.emit('activeStatesChanged', { prevIds, nextIds: [...this.currentStateIds] });
+  }
+
+  transitionToState(id) {
+    if (!this.states.has(id)) return false;
+    const prevIds = [...this.currentStateIds];
+    this.currentStateIds = new Set([id]);
+    this.emit('activeStatesChanged', { prevIds, nextIds: [...this.currentStateIds] });
+    return true;
   }
 
   fire(trigger) {
-    if (!this.currentStateId) return false;
-    for (const t of this.transitions.values()) {
-      if (t.fromId === this.currentStateId && t.trigger === trigger) {
-        const prev = this.currentStateId;
-        this.currentStateId = t.toId;
-        this.emit('currentStateChanged', { prevId: prev, nextId: this.currentStateId });
-        return true;
+    if (!this.currentStateIds.size) return false;
+    let changed = false;
+    const nextIds = new Set();
+    for (const stateId of this.currentStateIds) {
+      let transitioned = false;
+      for (const t of this.transitions.values()) {
+        if (t.fromId === stateId && t.trigger === trigger) {
+          nextIds.add(t.toId);
+          transitioned = true;
+          changed = true;
+        }
       }
+      if (!transitioned) nextIds.add(stateId);
+    }
+    if (changed) {
+      const prevIds = [...this.currentStateIds];
+      this.currentStateIds = nextIds;
+      this.emit('activeStatesChanged', { prevIds, nextIds: [...this.currentStateIds] });
+      return true;
     }
     return false;
   }
 
+  getActiveStateIds() {
+    return [...this.currentStateIds];
+  }
+
+  getInitialStateIds() {
+    return [...this.initialStateIds];
+  }
+
+  isStateActive(id) {
+    return this.currentStateIds.has(id);
+  }
+
+  isInitialState(id) {
+    return this.initialStateIds.includes(id);
+  }
+
+  getStateTransitions(stateId) {
+    return [...this.transitions.values()].filter(t => t.fromId === stateId);
+  }
+
   getAvailableTransitions() {
-    if (!this.currentStateId) return [];
-    return [...this.transitions.values()].filter(t => t.fromId === this.currentStateId);
+    if (!this.currentStateIds.size) return [];
+    return [...this.transitions.values()].filter(t => this.currentStateIds.has(t.fromId));
   }
 
   reset() {
-    const prev = this.currentStateId;
-    this.currentStateId = null;
-    this.emit('currentStateChanged', { prevId: prev, nextId: null });
+    const prevIds = [...this.currentStateIds];
+    this.currentStateIds = new Set();
+    this.emit('activeStatesChanged', { prevIds, nextIds: [] });
   }
 
   // ---------- Persistence ----------
@@ -145,7 +203,8 @@ export class FSM {
     return JSON.stringify({
       states: [...this.states.values()],
       transitions: [...this.transitions.values()],
-      initialStateId: this.initialStateId,
+      initialStateIds: this.initialStateIds,
+      initialStateId: this.initialStateIds[0] || null,
     });
   }
 
@@ -163,12 +222,17 @@ export class FSM {
       }));
       this.states = new Map(normalizedStates.map(s => [s.id, s]));
       this.transitions = new Map(data.transitions.map(t => [t.id, t]));
-      this.initialStateId = data.initialStateId || null;
-      this.currentStateId = null;
+      this.initialStateIds = Array.isArray(data.initialStateIds)
+        ? data.initialStateIds.filter(id => this.states.has(id))
+        : (data.initialStateId && this.states.has(data.initialStateId) ? [data.initialStateId] : []);
+      if (!this.initialStateIds.length && this.states.size > 0) {
+        this.initialStateIds = [this.states.keys().next().value];
+      }
+      this.currentStateIds = new Set();
       this.emit('fsmReplaced', {
         states: [...this.states.values()],
         transitions: [...this.transitions.values()],
-        initialStateId: this.initialStateId,
+        initialStateIds: [...this.initialStateIds],
       });
       return true;
     } catch (e) {

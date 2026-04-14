@@ -91,8 +91,9 @@ let edgeFromId = null;      // stateId when drawing an edge
 let createStateArmed = false;
 let _autoNodeCount = 1;
 const MOUSE_VERTICAL_SCALE = 0.01;
-let _actionRunToken = 0;
-let _actionsBusy = false;
+let _actionRunSerial = 0;
+const _stateActionTokens = new Map();
+const _busyActionStates = new Set();
 
 const vrHud = new THREE.Group();
 camera.add(vrHud);
@@ -156,25 +157,46 @@ function parseActionScript(script) {
   const actions = [];
   for (const line of lines) {
     if (!line || line.startsWith('#')) continue;
-    const idx = line.indexOf(':');
-    if (idx === -1) throw new Error(`書式エラー: ${line}`);
-    const type = line.slice(0, idx).trim().toLowerCase();
-    const value = line.slice(idx + 1).trim();
-    if (type === 'message') {
-      if (!value) throw new Error('message は本文を指定してください');
-      actions.push({ type: 'message', text: value });
-    } else if (type === 'wait') {
-      actions.push({ type: 'wait', durationMs: parseWaitDuration(value) });
-    } else {
-      throw new Error(`未対応アクション: ${type}`);
-    }
+    actions.push(parseActionLine(line));
   }
   return actions;
+}
+
+function parseActionLine(line) {
+  const idx = line.indexOf(':');
+  if (idx === -1) throw new Error(`書式エラー: ${line}`);
+  const type = line.slice(0, idx).trim().toLowerCase();
+  const value = line.slice(idx + 1).trim();
+  if (type === 'message') {
+    if (!value) throw new Error('message は本文を指定してください');
+    return { type: 'message', text: value };
+  }
+  if (type === 'wait') {
+    return { type: 'wait', durationMs: parseWaitDuration(value) };
+  }
+  if (type === 'event') {
+    if (!value) throw new Error('event はエッジ名を指定してください');
+    return { type: 'event', trigger: value };
+  }
+  if (type === 'parallel') {
+    const parts = value.split('|').map(part => part.trim()).filter(Boolean);
+    if (!parts.length) throw new Error('parallel は中身を指定してください');
+    const actions = parts.map(parseActionLine);
+    if (actions.some(action => action.type === 'event')) {
+      throw new Error('parallel 内では event は使えません');
+    }
+    return { type: 'parallel', actions };
+  }
+  throw new Error(`未対応アクション: ${type}`);
 }
 
 function actionToScriptLine(action) {
   if (action.type === 'message') return `message: ${action.text || ''}`;
   if (action.type === 'wait') return `wait: ${action.durationMs}ms`;
+  if (action.type === 'event') return `event: ${action.trigger || action.target || ''}`;
+  if (action.type === 'parallel') {
+    return `parallel: ${(action.actions || []).map(actionToScriptLine).join(' | ')}`;
+  }
   return '';
 }
 
@@ -191,6 +213,11 @@ function describeAction(action, active = false) {
   const prefix = active ? '▶ ' : '• ';
   if (action.type === 'message') return `${prefix}message: ${action.text}`;
   if (action.type === 'wait') return `${prefix}wait: ${formatWait(action.durationMs)}`;
+  if (action.type === 'event') return `${prefix}event: ${action.trigger || action.target}`;
+  if (action.type === 'parallel') {
+    const inner = (action.actions || []).map(describeAction).map(text => text.replace(/^• /, '')).join(' | ');
+    return `${prefix}parallel: ${inner}`;
+  }
   return `${prefix}${action.type}`;
 }
 
@@ -199,9 +226,23 @@ function waitMs(ms) {
 }
 
 function cancelActionRun() {
-  _actionRunToken += 1;
-  _actionsBusy = false;
+  _actionRunSerial += 1;
+  _stateActionTokens.clear();
+  _busyActionStates.clear();
   ui.setTriggerButtonsDisabled(false);
+}
+
+function areActionsBusy() {
+  return _busyActionStates.size > 0;
+}
+
+function getTriggerButtonTransitions() {
+  const seen = new Set();
+  return fsm.getAvailableTransitions().filter(t => {
+    if (seen.has(t.trigger)) return false;
+    seen.add(t.trigger);
+    return true;
+  });
 }
 
 function tryLoadFSMJson(json) {
@@ -238,7 +279,7 @@ async function importFSMFile(file) {
   cancelEdge();
   if (mode === 'run') {
     fsm.start();
-    ui.showTriggerButtons(fsm.getAvailableTransitions(), { disabled: _actionsBusy });
+    ui.showTriggerButtons(getTriggerButtonTransitions(), { disabled: areActionsBusy() });
   } else {
     ui.hideTriggerButtons();
     refreshActionPanel();
@@ -318,7 +359,7 @@ function scheduleSave() {
 }
 
 ['stateAdded','stateRemoved','stateRenamed','statePositionChanged',
- 'transitionAdded','transitionRemoved','triggerRenamed','initialStateChanged','stateActionChanged'
+ 'transitionAdded','transitionRemoved','triggerRenamed','initialStatesChanged','stateActionChanged'
 ].forEach(ev => fsm.on(ev, scheduleSave));
 
 // ============================================================
@@ -335,7 +376,7 @@ function setMode(m) {
 
   if (m === 'run') {
     fsm.start();
-    ui.showTriggerButtons(fsm.getAvailableTransitions(), { disabled: _actionsBusy });
+    ui.showTriggerButtons(getTriggerButtonTransitions(), { disabled: areActionsBusy() });
   } else {
     fsm.reset();
     ui.hideTriggerButtons();
@@ -414,7 +455,7 @@ async function editStateAction(id) {
   const s = fsm.states.get(id);
   if (!s) return;
   const script = await ui.showTextAreaInput(
-    '状態アクションを入力 (message: / wait: 例 1000ms, 1.5s)',
+    '状態アクションを入力 (message: / wait: / event: / parallel: a | b)',
     actionsToScript(s.actions || []),
   );
   if (script === null) return;
@@ -464,7 +505,7 @@ function getGroundPointFromAnyController() {
 }
 
 function fireTransitionById(id) {
-  if (_actionsBusy) {
+  if (areActionsBusy()) {
     ui.showToast('アクション実行中です');
     return false;
   }
@@ -472,9 +513,11 @@ function fireTransitionById(id) {
   if (!transition) return false;
   const ok = fsm.fire(transition.trigger);
   if (ok) {
-    const state = fsm.states.get(fsm.currentStateId);
-    ui.showToast(`→ ${state?.name || '?'}`);
-    ui.showTriggerButtons(fsm.getAvailableTransitions(), { disabled: _actionsBusy });
+    const activeNames = fsm.getActiveStateIds()
+      .map(stateId => fsm.states.get(stateId)?.name)
+      .filter(Boolean);
+    ui.showToast(`→ ${activeNames.join(', ') || '?'}`);
+    ui.showTriggerButtons(getTriggerButtonTransitions(), { disabled: areActionsBusy() });
   } else {
     ui.showToast('遷移できません');
   }
@@ -509,60 +552,102 @@ function refreshVrHud() {
   updateLabel(vrHintLabel, hintText);
 }
 
-function refreshActionPanel(activeIndex = -1, headerText = '') {
+function refreshActionPanel(activeStateId = null, activeIndex = -1, headerText = '') {
   if (mode !== 'run') {
     ui.hideActionPanel();
     return;
   }
-  const state = fsm.states.get(fsm.currentStateId);
-  if (!state) {
+  const activeStateIds = fsm.getActiveStateIds();
+  if (!activeStateIds.length) {
     ui.hideActionPanel();
     return;
   }
-  const actions = state.actions || [];
   const body = [];
-  if (headerText) body.push(headerText);
-  if (!actions.length) {
-    body.push('アクション未設定');
-  } else {
-    body.push(...actions.map((action, index) => describeAction(action, index === activeIndex)));
+  for (const stateId of activeStateIds) {
+    const state = fsm.states.get(stateId);
+    if (!state) continue;
+    body.push(`[${state.name}]`);
+    if (headerText && stateId === activeStateId) body.push(headerText);
+    const actions = state.actions || [];
+    if (!actions.length) {
+      body.push('アクション未設定');
+    } else {
+      body.push(...actions.map((action, index) => describeAction(
+        action,
+        stateId === activeStateId && index === activeIndex,
+      )));
+    }
+    body.push('');
   }
-  ui.showActionPanel(state.name, body.join('\n'));
+  if (body[body.length - 1] === '') body.pop();
+  ui.showActionPanel(`Active States (${activeStateIds.length})`, body.join('\n'));
+}
+
+async function executeAction(action, stateId, runToken, indexForUI = -1) {
+  if (runToken !== _stateActionTokens.get(stateId) || mode !== 'run' || !fsm.isStateActive(stateId)) return 'cancelled';
+
+  if (action.type === 'message') {
+    refreshActionPanel(stateId, indexForUI, 'アクション実行中');
+    ui.showToast(action.text, 2400);
+    await waitMs(250);
+    return 'ok';
+  }
+
+  if (action.type === 'wait') {
+    refreshActionPanel(stateId, indexForUI, `待機中 ${formatWait(action.durationMs)}`);
+    await waitMs(action.durationMs);
+    return 'ok';
+  }
+
+  if (action.type === 'event') {
+    const trigger = action.trigger || action.target;
+    refreshActionPanel(stateId, indexForUI, `遷移中 → ${trigger}`);
+    const ok = fsm.fire(trigger);
+    if (!ok) {
+      ui.showToast(`event先のエッジが見つかりません: ${trigger}`, 2800);
+      return 'ok';
+    }
+    return 'transitioned';
+  }
+
+  if (action.type === 'parallel') {
+    refreshActionPanel(stateId, indexForUI, '並列アクション実行中');
+    await Promise.all((action.actions || []).map(child => executeAction(child, stateId, runToken, indexForUI)));
+    return 'ok';
+  }
+
+  return 'ok';
 }
 
 async function runStateActions(stateId) {
   const state = fsm.states.get(stateId);
-  const runToken = ++_actionRunToken;
+  const runToken = ++_actionRunSerial;
+  _stateActionTokens.set(stateId, runToken);
   const actions = state?.actions || [];
 
   if (!state || mode !== 'run') return;
   if (!actions.length) {
-    _actionsBusy = false;
-    ui.setTriggerButtonsDisabled(false);
+    _busyActionStates.delete(stateId);
+    ui.setTriggerButtonsDisabled(areActionsBusy());
     refreshActionPanel();
     return;
   }
 
-  _actionsBusy = true;
-  ui.setTriggerButtonsDisabled(true);
+  _busyActionStates.add(stateId);
+  ui.setTriggerButtonsDisabled(areActionsBusy());
 
   for (let i = 0; i < actions.length; i += 1) {
-    if (runToken !== _actionRunToken || mode !== 'run' || fsm.currentStateId !== stateId) return;
-    const action = actions[i];
-    if (action.type === 'message') {
-      refreshActionPanel(i, 'アクション実行中');
-      ui.showToast(action.text, 2400);
-      await waitMs(250);
-    } else if (action.type === 'wait') {
-      refreshActionPanel(i, `待機中 ${formatWait(action.durationMs)}`);
-      await waitMs(action.durationMs);
+    const result = await executeAction(actions[i], stateId, runToken, i);
+    if (result === 'cancelled') return;
+    if (result === 'transitioned') {
+      return;
     }
   }
 
-  if (runToken !== _actionRunToken || mode !== 'run' || fsm.currentStateId !== stateId) return;
-  _actionsBusy = false;
-  ui.setTriggerButtonsDisabled(false);
-  refreshActionPanel(-1, 'アクション完了');
+  if (runToken !== _stateActionTokens.get(stateId) || mode !== 'run' || !fsm.isStateActive(stateId)) return;
+  _busyActionStates.delete(stateId);
+  ui.setTriggerButtonsDisabled(areActionsBusy());
+  refreshActionPanel(stateId, -1, 'アクション完了');
 }
 
 // ============================================================
@@ -665,7 +750,7 @@ input.on('contextmenu', ({ hit, x, y }) => {
       { label: '名前変更', action: () => renameNode(stateId) },
       { label: 'アクション編集', action: () => editStateAction(stateId) },
       { label: 'ここからエッジを引く', action: () => startEdge(stateId) },
-      { label: '初期状態に設定', action: () => fsm.setInitialState(stateId) },
+      { label: fsm.isInitialState(stateId) ? '初期状態から外す' : '初期状態に追加', action: () => fsm.toggleInitialState(stateId) },
       { sep: true },
       { label: `「${s?.name}」を削除`, danger: true, action: () => {
         if (confirm(`「${s?.name}」を削除しますか？`)) fsm.removeState(stateId);
@@ -735,8 +820,8 @@ input.on('xrButtonDown', ({ handedness, index }) => {
 
   if (handedness === 'left' && index === 5) {
     if (selectedId) {
-      fsm.setInitialState(selectedId);
-      ui.showToast('初期状態に設定しました');
+      fsm.toggleInitialState(selectedId);
+      ui.showToast(fsm.isInitialState(selectedId) ? '初期状態に追加しました' : '初期状態から外しました');
       refreshVrHud();
     }
   }
@@ -762,7 +847,7 @@ ui.on('reset', () => {
   cancelActionRun();
   if (mode === 'run') {
     fsm.start();
-    ui.showTriggerButtons(fsm.getAvailableTransitions(), { disabled: _actionsBusy });
+    ui.showTriggerButtons(getTriggerButtonTransitions(), { disabled: areActionsBusy() });
   } else {
     fsm.reset();
     refreshActionPanel();
@@ -785,10 +870,23 @@ ui.on('importFile', async ({ file }) => {
 });
 
 // FSM events → UI update in run mode
-fsm.on('currentStateChanged', () => {
+fsm.on('activeStatesChanged', ({ prevIds = [], nextIds = [] }) => {
+  const prevSet = new Set(prevIds);
+  const nextSet = new Set(nextIds);
+
+  for (const stateId of prevIds) {
+    if (!nextSet.has(stateId)) {
+      _stateActionTokens.delete(stateId);
+      _busyActionStates.delete(stateId);
+    }
+  }
+
   if (mode === 'run') {
-    ui.showTriggerButtons(fsm.getAvailableTransitions(), { disabled: _actionsBusy });
-    runStateActions(fsm.currentStateId);
+    ui.showTriggerButtons(getTriggerButtonTransitions(), { disabled: areActionsBusy() });
+    for (const stateId of nextIds) {
+      if (!prevSet.has(stateId)) runStateActions(stateId);
+    }
+    refreshActionPanel();
   } else {
     refreshActionPanel();
   }
@@ -796,7 +894,7 @@ fsm.on('currentStateChanged', () => {
 });
 
 fsm.on('stateActionChanged', ({ id }) => {
-  if (mode === 'run' && id === fsm.currentStateId) {
+  if (mode === 'run' && fsm.isStateActive(id)) {
     refreshActionPanel();
   }
 });
