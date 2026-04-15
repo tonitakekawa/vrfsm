@@ -217,6 +217,15 @@
       pointer-events: none;
     }
 
+    #p2p-indicator {
+      position: absolute;
+      top: 34px;
+      right: 16px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.42);
+      pointer-events: none;
+    }
+
     #action-panel {
       position: absolute;
       top: 72px;
@@ -259,6 +268,7 @@
       <button class="btn active" id="btn-edit">編集</button>
       <button class="btn" id="btn-run">実行</button>
       <button class="btn" id="btn-add-state">新規状態</button>
+      <button class="btn" id="btn-p2p">P2P</button>
       <button class="btn" id="btn-reset">リセット</button>
       <button class="btn" id="btn-clear">クリア</button>
       <button class="btn" id="btn-export">Export</button>
@@ -294,6 +304,7 @@
 
     <div id="toast"></div>
     <div id="save-indicator">保存済み</div>
+    <div id="p2p-indicator">P2P オフ</div>
     <div id="vr-btn-container"></div>
   </div>
 

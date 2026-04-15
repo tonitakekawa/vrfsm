@@ -205,6 +205,7 @@ export class FSM {
       transitions: [...this.transitions.values()],
       initialStateIds: this.initialStateIds,
       initialStateId: this.initialStateIds[0] || null,
+      activeStateIds: [...this.currentStateIds],
     });
   }
 
@@ -228,11 +229,16 @@ export class FSM {
       if (!this.initialStateIds.length && this.states.size > 0) {
         this.initialStateIds = [this.states.keys().next().value];
       }
-      this.currentStateIds = new Set();
+      this.currentStateIds = new Set(
+        Array.isArray(data.activeStateIds)
+          ? data.activeStateIds.filter(id => this.states.has(id))
+          : [],
+      );
       this.emit('fsmReplaced', {
         states: [...this.states.values()],
         transitions: [...this.transitions.values()],
         initialStateIds: [...this.initialStateIds],
+        activeStateIds: [...this.currentStateIds],
       });
       return true;
     } catch (e) {

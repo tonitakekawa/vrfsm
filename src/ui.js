@@ -8,6 +8,7 @@ export class UIManager {
     this.btnEdit    = document.getElementById('btn-edit');
     this.btnRun     = document.getElementById('btn-run');
     this.btnAddState = document.getElementById('btn-add-state');
+    this.btnP2P     = document.getElementById('btn-p2p');
     this.btnReset   = document.getElementById('btn-reset');
     this.btnClear   = document.getElementById('btn-clear');
     this.btnExport  = document.getElementById('btn-export');
@@ -19,6 +20,7 @@ export class UIManager {
     this.edgeHint   = document.getElementById('edge-preview-hint');
     this.toast      = document.getElementById('toast');
     this.saveInd    = document.getElementById('save-indicator');
+    this.p2pInd     = document.getElementById('p2p-indicator');
 
     this._dialogOverlay = document.getElementById('dialog-overlay');
     this._dialogTitle   = document.getElementById('dialog-title');
@@ -62,6 +64,15 @@ export class UIManager {
     this.modeHint.textContent = armed
       ? '配置したい場所をクリックして新規状態を追加'
       : '新規状態ボタンで追加 / 右クリックでメニュー / ドラッグで移動 / Shift+ドラッグで高さ変更';
+  }
+
+  setP2PStatus(status) {
+    this.btnP2P.classList.toggle('active', !!status.enabled);
+    if (!status.enabled) {
+      this.p2pInd.textContent = 'P2P オフ';
+      return;
+    }
+    this.p2pInd.textContent = `P2P ${status.connectedPeers} 接続 / room ${status.roomId}`;
   }
 
   // ---------- Trigger buttons (run mode) ----------
@@ -218,6 +229,7 @@ export class UIManager {
     this.btnEdit.addEventListener('click', () => this.emit('modeChange', 'edit'));
     this.btnRun.addEventListener('click',  () => this.emit('modeChange', 'run'));
     this.btnAddState.addEventListener('click', () => this.emit('toggleCreateState'));
+    this.btnP2P.addEventListener('click', () => this.emit('toggleP2P'));
     this.btnReset.addEventListener('click', () => this.emit('reset'));
     this.btnClear.addEventListener('click', () => this.emit('clear'));
     this.btnExport.addEventListener('click', () => this.emit('export'));

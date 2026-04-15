@@ -8,6 +8,7 @@ import { World } from './world.js';
 import { InputManager } from './input.js';
 import { UIManager } from './ui.js';
 import { createLabel, updateLabel } from './label.js';
+import { P2PSync } from './p2p.js';
 
 // ============================================================
 // Three.js setup
@@ -82,6 +83,9 @@ const fsm  = new FSM();
 const ui   = new UIManager();
 const input = new InputManager(renderer, camera);
 const world = new World(scene, fsm);
+let _isApplyingRemoteSnapshot = false;
+let _clock = 0;
+let _lastSnapshotSource = '';
 
 input.addXRController(ctrl0);
 input.addXRController(ctrl1);
@@ -116,6 +120,44 @@ const vrHintLabel = createLabel('', {
 });
 vrHintLabel.position.set(0, -0.08, 0);
 vrHud.add(vrHintLabel);
+
+const p2p = new P2PSync({
+  getSnapshot: () => ({
+    clock: _clock,
+    sourceId: p2p.peerId,
+    fsm: JSON.parse(fsm.toJSON()),
+  }),
+  applySnapshot: async snapshot => {
+    const incomingClock = Number(snapshot.clock) || 0;
+    const incomingSource = String(snapshot.sourceId || '');
+    if (
+      incomingClock < _clock ||
+      (incomingClock === _clock && incomingSource <= _lastSnapshotSource)
+    ) return;
+
+    cancelActionRun();
+    _isApplyingRemoteSnapshot = true;
+    _clock = incomingClock;
+    _lastSnapshotSource = incomingSource;
+    try {
+      const ok = fsm.fromJSON(JSON.stringify(snapshot.fsm));
+      if (!ok) return;
+      updateAutoNodeCounter();
+      if (mode === 'run') {
+        ui.showTriggerButtons(getTriggerButtonTransitions(), { disabled: areActionsBusy() });
+        for (const stateId of fsm.getActiveStateIds()) runStateActions(stateId);
+      } else {
+        ui.hideTriggerButtons();
+        refreshActionPanel();
+      }
+      refreshVrHud();
+      ui.showToast('P2P更新を反映しました', 1200);
+    } finally {
+      _isApplyingRemoteSnapshot = false;
+    }
+  },
+  onStatus: status => ui.setP2PStatus(status),
+});
 
 // ============================================================
 // Load initial data — Cloudflare KV via /api/fsm
@@ -358,9 +400,24 @@ function scheduleSave() {
   }, 600);
 }
 
+let _syncTimer = null;
+function scheduleP2PSync() {
+  if (_isApplyingRemoteSnapshot) return;
+  _clock += 1;
+  _lastSnapshotSource = p2p.peerId;
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(() => {
+    p2p.broadcastSnapshot();
+  }, 120);
+}
+
 ['stateAdded','stateRemoved','stateRenamed','statePositionChanged',
- 'transitionAdded','transitionRemoved','triggerRenamed','initialStatesChanged','stateActionChanged'
+ 'transitionAdded','transitionRemoved','triggerRenamed','initialStatesChanged','stateActionChanged','activeStatesChanged'
 ].forEach(ev => fsm.on(ev, scheduleSave));
+
+['stateAdded','stateRemoved','stateRenamed','statePositionChanged',
+ 'transitionAdded','transitionRemoved','triggerRenamed','initialStatesChanged','stateActionChanged','activeStatesChanged'
+].forEach(ev => fsm.on(ev, scheduleP2PSync));
 
 // ============================================================
 // Mode management
@@ -838,6 +895,20 @@ ui.on('toggleCreateState', () => {
   setCreateStateArmed(!createStateArmed);
 });
 
+ui.on('toggleP2P', async () => {
+  if (p2p.enabled) {
+    await p2p.disconnect();
+    ui.showToast('P2P を切断しました');
+    return;
+  }
+  try {
+    await p2p.connect(getSlotId());
+    ui.showToast('P2P を開始しました');
+  } catch (_) {
+    ui.showToast('P2P 接続に失敗しました', 2400);
+  }
+});
+
 ui.on('fireTrigger', ({ trigger }) => {
   const transition = fsm.getAvailableTransitions().find(t => t.trigger === trigger);
   if (transition) fireTransitionById(transition.id);
@@ -967,4 +1038,8 @@ renderer.setAnimationLoop((time, frame) => {
 loadData().then(() => {
   updateAutoNodeCounter();
   refreshVrHud();
+});
+
+window.addEventListener('beforeunload', () => {
+  p2p.disconnect();
 });
