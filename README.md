@@ -1,25 +1,38 @@
 # VRFSM
+- FSMを編集して実行するアプリ。
+- 例)３分待つ→ラーメンできたよ、等
 
-VR上でFSMを構築・実行できるWebアプリ。
-ホスティング : Cloudflare Pages + KV
-ライブラリ : Three.js, WebXR
+## ホスティング
+- Cloudflare Pages
+- KV
+
+## ライブラリ
+- Three.js
+- WebXR
 
 ## ファイル構成
 
-- `src/fsm.js` — 純粋なFSMデータモデル（イベントエミッター付き）
-- `src/world.js` — Three.js 3D可視化（NodeMesh/EdgeMesh）
-- `src/input.js` — マウス/タッチ/VRコントローラー統合入力
-- `src/ui.js` — HTML UIオーバーレイ
-- `src/main.js` — エントリポイント、全モジュール統合
-- `src/label.js` — Canvas texture ベースのテキストラベル
-- `functions/api/fsm.js` — Cloudflare Pages Function（KV読み書き）
+| ファイル | 説明 |
+|----------|------|
+| `src/fsm.js` | 純粋なFSMデータモデル（イベントエミッター付き） |
+| `src/world.js` | Three.js 3D可視化（NodeMesh/EdgeMesh） |
+| `src/input.js` | マウス/タッチ/VRコントローラー統合入力 |
+| `src/ui.js` | HTML UIオーバーレイ |
+| `src/main.js` | エントリポイント、全モジュール統合 |
+| `src/label.js` | Canvas texture ベースのテキストラベル |
+| `functions/api/fsm.js` | Cloudflare Pages Function（KV読み書き） |
 
 ## 起動・デプロイ
 
 ```bash
-npm run dev          # Vite dev server (localhost:5173)
-npm run pages:dev    # Cloudflare Pages ローカル (localhost:8788)
-npm run pages:deploy # Cloudflare Pages にデプロイ
+# Vite dev server (localhost:5173)
+npm run dev          
+
+# Cloudflare Pages ローカル (localhost:8788)
+npm run pages:dev
+
+# Cloudflare Pages にデプロイ
+npm run pages:deploy
 ```
 
 ## 操作
@@ -37,6 +50,6 @@ npm run pages:deploy # Cloudflare Pages にデプロイ
   - 左スティック = 移動、右スティック左右 = 旋回
 - **URLシェア**: `?id=<uuid>` でFSMを共有可能
 
-##　協業AI
+## 協業AI
 - Claude (Anthropic)
 - GPT(OpenAI)
