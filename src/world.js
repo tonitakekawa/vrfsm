@@ -359,6 +359,7 @@ class EdgeMesh {
     // Remove old geometry
     if (this._tube) { this._tube.geometry.dispose(); this.group.remove(this._tube); }
     if (this._arrow) { this._arrow.geometry.dispose(); this.group.remove(this._arrow); }
+    if (this._mat) { this._mat.dispose(); this._mat = null; }
 
     const mat = new THREE.MeshStandardMaterial({
       color: this._available ? EDGE_AVAILABLE : EDGE_COLOR,

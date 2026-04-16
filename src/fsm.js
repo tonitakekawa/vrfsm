@@ -93,9 +93,6 @@ export class FSM {
     if (!this.states.has(id)) return;
     if (this.initialStateIds.includes(id)) {
       this.initialStateIds = this.initialStateIds.filter(sid => sid !== id);
-      if (!this.initialStateIds.length && this.states.size > 0) {
-        this.initialStateIds = [id];
-      }
     } else {
       this.initialStateIds.push(id);
     }

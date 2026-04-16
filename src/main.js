@@ -99,6 +99,9 @@ let _actionRunSerial = 0;
 const _stateActionTokens = new Map();
 const _busyActionStates = new Set();
 
+let _vrModeText = '';
+let _vrHintText = '';
+
 const vrHud = new THREE.Group();
 camera.add(vrHud);
 vrHud.position.set(0, -0.48, -1.35);
@@ -605,8 +608,8 @@ function refreshVrHud() {
     hintText = 'Use toolbar on Mac or edge trigger in VR to step';
   }
 
-  updateLabel(vrModeLabel, modeText);
-  updateLabel(vrHintLabel, hintText);
+  if (modeText !== _vrModeText) { updateLabel(vrModeLabel, modeText); _vrModeText = modeText; }
+  if (hintText !== _vrHintText) { updateLabel(vrHintLabel, hintText); _vrHintText = hintText; }
 }
 
 function refreshActionPanel(activeStateId = null, activeIndex = -1, headerText = '') {
@@ -669,7 +672,8 @@ async function executeAction(action, stateId, runToken, indexForUI = -1) {
 
   if (action.type === 'parallel') {
     refreshActionPanel(stateId, indexForUI, '並列アクション実行中');
-    await Promise.all((action.actions || []).map(child => executeAction(child, stateId, runToken, indexForUI)));
+    const results = await Promise.all((action.actions || []).map(child => executeAction(child, stateId, runToken, indexForUI)));
+    if (results.includes('cancelled')) return 'cancelled';
     return 'ok';
   }
 
